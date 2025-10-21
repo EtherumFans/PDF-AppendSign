@@ -25,6 +25,10 @@ The shaded CLI is generated at
 java -jar target/...jar app --help
 ```
 
+> **Note:** Older instructions referenced the `com.demo.pdf.IncrementalSigner` main
+> class. It still works for backwards compatibility, but the recommended entry
+> point is the shaded JAR's manifest (`java -jar ...`).
+
 ### `create-template`
 
 ```
