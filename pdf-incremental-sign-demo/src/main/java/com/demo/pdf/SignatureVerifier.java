@@ -1,0 +1,74 @@
+package com.demo.pdf;
+
+import com.demo.crypto.DemoKeystoreUtil;
+import com.itextpdf.forms.PdfAcroForm;
+import com.itextpdf.forms.fields.PdfFormField;
+import com.itextpdf.kernel.pdf.PdfDocument;
+import com.itextpdf.kernel.pdf.PdfName;
+import com.itextpdf.kernel.pdf.PdfReader;
+import com.itextpdf.kernel.pdf.PdfString;
+import com.itextpdf.signatures.PdfPKCS7;
+import com.itextpdf.signatures.SignatureUtil;
+
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.List;
+import java.util.Locale;
+
+public final class SignatureVerifier {
+
+    private SignatureVerifier() {
+    }
+
+    public static int verify(String pdfPath) throws Exception {
+        DemoKeystoreUtil.ensureProvider();
+        try (PdfReader reader = new PdfReader(pdfPath);
+             PdfDocument document = new PdfDocument(reader)) {
+            SignatureUtil signatureUtil = new SignatureUtil(document);
+            List<String> names = signatureUtil.getSignatureNames();
+            System.out.println("[verify] Signatures found: " + names.size());
+            PdfAcroForm form = PdfAcroForm.getAcroForm(document, true);
+            int exitCode = 0;
+            for (String name : names) {
+                System.out.println("\n=== Signature: " + name + " ===");
+                PdfPKCS7 pkcs7 = signatureUtil.readSignatureData(name);
+                boolean coversWhole = signatureUtil.signatureCoversWholeDocument(name);
+                boolean valid = pkcs7.verifySignatureIntegrityAndAuthenticity();
+                String subject = pkcs7.getSigningCertificate().getSubjectDN().getName();
+                Date signDate = pkcs7.getSignDate().getTime();
+                SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss Z", Locale.ROOT);
+                System.out.println("Signer CN: " + subject);
+                System.out.println("Sign date: " + sdf.format(signDate));
+                System.out.println("Covers whole document: " + coversWhole);
+                System.out.println("Valid at revision: " + valid);
+                if (!valid) {
+                    exitCode = 2;
+                }
+                PdfFormField sigField = form.getField(name);
+                if (sigField == null) {
+                    sigField = form.getField("sig_row_" + name.replaceAll("\\D", ""));
+                }
+                if (sigField != null && sigField.getPdfObject().containsKey(PdfName.Lock)) {
+                    System.out.println("Locked fields:");
+                    PdfString locked;
+                    com.itextpdf.kernel.pdf.PdfArray array = sigField.getPdfObject().getAsDictionary(PdfName.Lock).getAsArray(PdfName.Fields);
+                    if (array != null) {
+                        for (int i = 0; i < array.size(); i++) {
+                            locked = array.getAsString(i);
+                            if (locked == null) {
+                                continue;
+                            }
+                            String fieldName = locked.toUnicodeString();
+                            PdfFormField lockedField = form.getField(fieldName);
+                            boolean readOnly = lockedField != null && lockedField.isReadOnly();
+                            System.out.println(" - " + fieldName + " (readOnly=" + readOnly + ")");
+                        }
+                    }
+                } else {
+                    System.out.println("No FieldMDP lock information available");
+                }
+            }
+            return exitCode;
+        }
+    }
+}
