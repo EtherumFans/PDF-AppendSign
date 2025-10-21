@@ -2,7 +2,6 @@ package com.demo.pdf;
 
 import com.itextpdf.forms.PdfAcroForm;
 import com.itextpdf.forms.fields.PdfFormField;
-import com.itextpdf.forms.fields.PdfSignatureFormField;
 import com.itextpdf.forms.fields.PdfTextFormField;
 import com.itextpdf.io.font.constants.StandardFonts;
 import com.itextpdf.kernel.colors.ColorConstants;
@@ -125,11 +124,11 @@ public class NursingRecordTemplate {
                 form.addField(tfNurse, pdf.getFirstPage());
 
                 Rectangle rSign = new Rectangle(xSign + 3f, rowBottom + 3f, colWidths[3] - 6f, height - 6f);
-                PdfSignatureFormField sig = PdfSignatureFormField.createSignature(pdf, rSign)
+                PdfFormField sig = PdfFormField.createSignature(pdf, rSign)
                         .setFieldName(FIELD_SIGN_PREFIX + i);
-                // 绑定到第一页即可（addField 第二个参数是页对象）
                 sig.getWidgets().get(0).setHighlightMode(PdfName.N);
-                form.addField(sig, pdf.getFirstPage());
+                sig.getWidgets().get(0).setPage(pdf.getFirstPage());
+                form.addField(sig);
             }
 
             doc.flush();
