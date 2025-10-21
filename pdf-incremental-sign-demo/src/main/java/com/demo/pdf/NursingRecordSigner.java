@@ -328,10 +328,10 @@ public final class NursingRecordSigner {
                 throw new IllegalStateException("Signature field not found: " + name);
             }
             Rectangle rect = LayoutUtil.getFieldRect(pageSize, row, LayoutUtil.FieldSlot.SIGNATURE);
-            PdfSignatureFormField created = PdfSignatureFormField.createSignature(document, rect);
-            created.setFieldName(name);
-            form.addField(created, document.getPage(pageNumber));
-            return created;
+            PdfFormField createdField = PdfSignatureFormField.createSignature(document, rect);
+            createdField.setFieldName(name);
+            form.addField(createdField, document.getPage(pageNumber));
+            field = createdField;
         }
         if (!(field instanceof PdfSignatureFormField)) {
             throw new IllegalStateException("Field is not a signature field: " + name);
