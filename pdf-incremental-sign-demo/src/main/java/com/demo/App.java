@@ -6,6 +6,7 @@ import com.demo.pdf.NursingRecordTemplate;
 import com.demo.pdf.SignatureVerifier;
 import picocli.CommandLine;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.Callable;
 
@@ -50,7 +51,10 @@ public class App {
             System.out.println("[create-template] Starting");
             String dest = output.toAbsolutePath().toString();
             if (certPath != null) {
-                NursingRecordTemplate.create(dest, rows, certPath.toAbsolutePath().toString(), password);
+                String temp = dest + ".tmp";
+                NursingRecordTemplate.createTemplate(temp, rows);
+                NursingRecordSigner.certifyDocument(temp, dest, certPath.toAbsolutePath().toString(), password);
+                Files.deleteIfExists(Path.of(temp));
                 System.out.println("[create-template] Template certified and written to " + output.toAbsolutePath());
             } else {
                 NursingRecordTemplate.createTemplate(dest, rows);

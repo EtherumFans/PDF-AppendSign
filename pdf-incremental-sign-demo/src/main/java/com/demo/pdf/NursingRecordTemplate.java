@@ -2,6 +2,7 @@ package com.demo.pdf;
 
 import com.itextpdf.forms.PdfAcroForm;
 import com.itextpdf.forms.fields.PdfFormField;
+import com.itextpdf.forms.fields.PdfSignatureFormField;
 import com.itextpdf.forms.fields.PdfTextFormField;
 import com.itextpdf.io.font.constants.StandardFonts;
 import com.itextpdf.kernel.colors.ColorConstants;
@@ -19,8 +20,6 @@ import com.itextpdf.layout.element.Table;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.Objects;
 
 /**
@@ -44,52 +43,14 @@ public class NursingRecordTemplate {
     private static final String FIELD_NURSE_PREFIX = "nurseName_";
     private static final String FIELD_SIGN_PREFIX = "nurseSign_";
 
-    /**
-     * 生成护理记录单模板（无标题副标题重载，避免 create(...) 歧义）
-     */
+    /** 生成护理记录单模板 */
     public static void createTemplate(String dest, int rowCount) throws IOException {
-        writeTemplate(Path.of(dest), rowCount);
-    }
-
-    /**
-     * 为兼容旧调用方保留的 create(...) 方法。若提供了 certPath，则会在生成模板后
-     * 对结果进行 DocMDP 认证；否则行为与 {@link #createTemplate(String, int)} 相同。
-     */
-    public static void create(String dest, int rowCount) throws IOException {
-        createTemplate(dest, rowCount);
-    }
-
-    public static void create(String dest, int rowCount, String certPath, String password) throws IOException {
         Objects.requireNonNull(dest, "dest must not be null");
-        ensureParentDir(dest);
-
-        Path output = Path.of(dest);
-        boolean needsCertification = certPath != null && !certPath.isBlank();
-        Path workingFile = needsCertification ? Files.createTempFile("nursing-template", ".pdf") : output;
-
-        try {
-            writeTemplate(workingFile, rowCount);
-            if (needsCertification) {
-                try {
-                    NursingRecordSigner.certifyDocument(workingFile.toString(), output.toString(), certPath, password);
-                } catch (Exception e) {
-                    throw new IOException("Failed to certify nursing template", e);
-                }
-            }
-        } finally {
-            if (needsCertification) {
-                Files.deleteIfExists(workingFile);
-            }
-        }
-    }
-
-    private static void writeTemplate(Path destination, int rowCount) throws IOException {
-        Objects.requireNonNull(destination, "dest must not be null");
         if (rowCount <= 0) rowCount = 10;
 
-        ensureParentDir(destination.toString());
+        ensureParentDir(dest);
 
-        try (PdfWriter writer = new PdfWriter(destination.toString());
+        try (PdfWriter writer = new PdfWriter(dest);
              PdfDocument pdf = new PdfDocument(writer);
              Document doc = new Document(pdf)) {
 
@@ -106,10 +67,9 @@ public class NursingRecordTemplate {
                     .setMarginBottom(12f);
             doc.add(title);
 
-            // 表格列宽
+            // 表格列宽（绝对宽度，避免 UnitValue 依赖）
             float[] colWidths = new float[]{80f, 320f, 80f, 120f};
             Table table = new Table(colWidths);
-            // 用绝对宽度，避免 UnitValue 依赖差异
             table.setWidth(pdf.getFirstPage().getPageSize().getWidth() - 2 * MARGIN);
             table.setBorder(new SolidBorder(0.8f));
 
@@ -131,8 +91,6 @@ public class NursingRecordTemplate {
             float pageHeight = pdf.getFirstPage().getPageSize().getHeight();
 
             float tableLeft = MARGIN;
-            float tableRight = pdf.getFirstPage().getPageSize().getWidth() - MARGIN;
-
             float headerHeight = ROW_HEIGHT + 6f;
             float firstRowTopY = pageHeight - MARGIN - HEADER_FONT_SIZE * 1.6f - headerHeight;
 
@@ -162,20 +120,18 @@ public class NursingRecordTemplate {
                 form.addField(tfNurse, pdf.getFirstPage());
 
                 Rectangle rSign = new Rectangle(xSign + 3f, rowBottom + 3f, colWidths[3] - 6f, height - 6f);
-                PdfFormField sig = PdfFormField.createSignature(pdf, rSign)
+                PdfSignatureFormField sig = PdfSignatureFormField.createSignature(pdf, rSign)
                         .setFieldName(FIELD_SIGN_PREFIX + i);
+                // 绑定到第一页：addField 的第二个参数就是页面对象；不再调用 setPage(...)
                 sig.getWidgets().get(0).setHighlightMode(PdfName.N);
-                sig.getWidgets().get(0).setPage(pdf.getFirstPage());
-                form.addField(sig);
+                form.addField(sig, pdf.getFirstPage());
             }
 
             doc.flush();
         }
     }
 
-    /**
-     * 填充某一行文本（不签名，签名请另行使用 PdfSigner 增量追加）
-     */
+    /** 填充某一行文本（不签名，签名请另行使用 PdfSigner 增量追加） */
     public static void fillRecord(String src, String dest, int rowIndex,
                                   String time, String content, String nurseName) throws IOException {
         Objects.requireNonNull(src, "src must not be null");
@@ -196,7 +152,7 @@ public class NursingRecordTemplate {
         }
     }
 
-    /* ------------- utils ------------- */
+    /* utils */
 
     private static void setIfPresent(PdfAcroForm form, String fieldName, String value) {
         PdfFormField f = form.getField(fieldName);
@@ -215,21 +171,5 @@ public class NursingRecordTemplate {
         if (parent != null && !parent.exists()) {
             parent.mkdirs();
         }
-    }
-
-    public static void main(String[] args) throws Exception {
-        String template = "target/nursing-template.pdf";
-        createTemplate(template, 10);
-
-        String filled10 = "target/nursing-10h.pdf";
-        fillRecord(template, filled10, 1, "10:00", "晨间巡视：生命体征平稳", "张三");
-
-        String filled13 = "target/nursing-13h.pdf";
-        fillRecord(filled10, filled13, 2, "13:00", "进餐后复测血糖，完成宣教", "李四");
-
-        String filled15 = "target/nursing-15h.pdf";
-        fillRecord(filled13, filled15, 3, "15:00", "更换静脉通道，病情观察", "王五");
-
-        System.out.println("模板与样例已生成到 target/ 目录。签名占位域：nurseSign_1/2/3...");
     }
 }
