@@ -120,8 +120,8 @@ public class NursingRecordTemplate {
                 form.addField(tfNurse, pdf.getFirstPage());
 
                 Rectangle rSign = new Rectangle(xSign + 3f, rowBottom + 3f, colWidths[3] - 6f, height - 6f);
-                PdfSignatureFormField sig = PdfSignatureFormField.createSignature(pdf, rSign)
-                        .setFieldName(FIELD_SIGN_PREFIX + i);
+                PdfSignatureFormField sig = PdfSignatureFormField.createSignature(pdf, rSign);
+                sig.setFieldName(FIELD_SIGN_PREFIX + i);
                 // 绑定到第一页：addField 的第二个参数就是页面对象；不再调用 setPage(...)
                 sig.getWidgets().get(0).setHighlightMode(PdfName.N);
                 form.addField(sig, pdf.getFirstPage());
