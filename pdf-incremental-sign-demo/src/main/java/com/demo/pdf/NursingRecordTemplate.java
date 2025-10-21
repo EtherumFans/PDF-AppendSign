@@ -32,11 +32,15 @@ public final class NursingRecordTemplate {
     private NursingRecordTemplate() {
     }
 
-    public static void create(String outPdf, String certP12, String p12Pass) throws Exception {
-        create(outPdf, 3, certP12, p12Pass);
+    public static void createTemplate(String outPdf, String certP12, String p12Pass) throws Exception {
+        createTemplate(outPdf, 3, certP12, p12Pass);
     }
 
-    public static void create(String outPdf, int rows, String certP12, String p12Pass) throws Exception {
+    public static void createTemplate(String outPdf, int rows) throws Exception {
+        createTemplate(outPdf, rows, null, null);
+    }
+
+    public static void createTemplate(String outPdf, int rows, String certP12, String p12Pass) throws Exception {
         if (rows < 1) {
             throw new IllegalArgumentException("rows must be at least 1");
         }
@@ -107,6 +111,42 @@ public final class NursingRecordTemplate {
             DocMDPUtil.applyCertification(signer, privateKey, chain, DocMDPUtil.Permission.FORM_FILL_AND_SIGNATURES);
         }
         System.out.println("[create-template] DocMDP certification applied");
+    }
+
+    public static void fillRecord(String sourcePdf, String destinationPdf, int row,
+                                   String timeValue, String textValue, String nurseValue) throws Exception {
+        if (row < 1) {
+            throw new IllegalArgumentException("row must be at least 1");
+        }
+        try (PdfDocument pdfDoc = new PdfDocument(new PdfReader(sourcePdf), new PdfWriter(destinationPdf))) {
+            PdfAcroForm form = PdfAcroForm.getAcroForm(pdfDoc, true);
+            String prefix = String.format("row%d", row);
+            PdfFormField timeField = requireField(form, prefix + ".time");
+            PdfFormField textField = requireField(form, prefix + ".text");
+            PdfFormField nurseField = requireField(form, prefix + ".nurse");
+
+            timeField.setValue(timeValue);
+            textField.setValue(textValue);
+            nurseField.setValue(nurseValue);
+        }
+    }
+
+    @Deprecated
+    public static void create(String outPdf, String certP12, String p12Pass) throws Exception {
+        createTemplate(outPdf, certP12, p12Pass);
+    }
+
+    @Deprecated
+    public static void create(String outPdf, int rows, String certP12, String p12Pass) throws Exception {
+        createTemplate(outPdf, rows, certP12, p12Pass);
+    }
+
+    private static PdfFormField requireField(PdfAcroForm form, String name) {
+        PdfFormField field = form.getField(name);
+        if (field == null) {
+            throw new IllegalStateException("Field not found: " + name);
+        }
+        return field;
     }
 
     private static PdfFormField createSignatureField(PdfDocument pdfDoc, Rectangle sigRect) {
