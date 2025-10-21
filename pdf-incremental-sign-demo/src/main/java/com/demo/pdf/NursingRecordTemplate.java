@@ -11,6 +11,7 @@ import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfReader;
 import com.itextpdf.kernel.pdf.PdfWriter;
 import com.itextpdf.kernel.pdf.StampingProperties;
+import com.itextpdf.kernel.pdf.annot.PdfAnnotation;
 import com.itextpdf.kernel.pdf.canvas.PdfCanvas;
 import com.itextpdf.layout.Document;
 import com.itextpdf.layout.element.Paragraph;
@@ -94,7 +95,7 @@ public final class NursingRecordTemplate {
                 form.addField(textField, pdfDoc.getFirstPage());
                 form.addField(nurseField, pdfDoc.getFirstPage());
 
-                PdfFormField sigField = PdfSignatureFormField.createSignature(pdfDoc, sigRect);
+                PdfFormField sigField = createSignatureField(pdfDoc, sigRect);
                 sigField.setFieldName(String.format("sig_row_%d", row));
                 form.addField(sigField, pdfDoc.getFirstPage());
             }
@@ -106,5 +107,15 @@ public final class NursingRecordTemplate {
             DocMDPUtil.applyCertification(signer, privateKey, chain, DocMDPUtil.Permission.FORM_FILL_AND_SIGNATURES);
         }
         System.out.println("[create-template] DocMDP certification applied");
+    }
+
+    private static PdfFormField createSignatureField(PdfDocument pdfDoc, Rectangle sigRect) {
+        try {
+            return PdfSignatureFormField.createSignature(pdfDoc, sigRect);
+        } catch (NoSuchMethodError ex) {
+            PdfFormField field = PdfFormField.createSignature(pdfDoc);
+            field.setWidget(sigRect, PdfAnnotation.HIGHLIGHT_NONE);
+            return field;
+        }
     }
 }
