@@ -14,7 +14,7 @@ import com.itextpdf.kernel.pdf.StampingProperties;
 import com.itextpdf.kernel.pdf.canvas.PdfCanvas;
 import com.itextpdf.layout.Document;
 import com.itextpdf.layout.element.Paragraph;
-import com.itextpdf.layout.property.TextAlignment;
+import com.itextpdf.layout.properties.TextAlignment;
 import com.itextpdf.signatures.PdfSigner;
 
 import java.io.ByteArrayInputStream;
@@ -31,7 +31,14 @@ public final class NursingRecordTemplate {
     private NursingRecordTemplate() {
     }
 
+    public static void create(String outPdf, String certP12, String p12Pass) throws Exception {
+        create(outPdf, 3, certP12, p12Pass);
+    }
+
     public static void create(String outPdf, int rows, String certP12, String p12Pass) throws Exception {
+        if (rows < 1) {
+            throw new IllegalArgumentException("rows must be at least 1");
+        }
         DemoKeystoreUtil.ensureProvider();
         String certPath = certP12;
         char[] password = p12Pass != null ? p12Pass.toCharArray() : "123456".toCharArray();
@@ -87,7 +94,7 @@ public final class NursingRecordTemplate {
                 form.addField(textField, pdfDoc.getFirstPage());
                 form.addField(nurseField, pdfDoc.getFirstPage());
 
-                PdfSignatureFormField sigField = PdfSignatureFormField.createSignature(pdfDoc, sigRect);
+                PdfFormField sigField = PdfSignatureFormField.createSignature(pdfDoc, sigRect);
                 sigField.setFieldName(String.format("sig_row_%d", row));
                 form.addField(sigField, pdfDoc.getFirstPage());
             }
