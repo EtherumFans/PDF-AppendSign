@@ -1,12 +1,13 @@
-# PDF Incremental PAdES Demo
+# PDF Incremental Nursing Record Demo
 
-This demo shows how to build a nursing record PDF that is certified with DocMDP and then signed in increments using FieldMDP locks. Each nursing row can be filled and signed independently while keeping previously signed rows read-only.
+This demo shows how to maintain a nursing record PDF with **incremental signatures**. Each row of the nursing log is protected by
+FieldMDP locks, while the document itself is certified with DocMDP. The CLI now supports two workflows:
 
-## Why DocMDP + FieldMDP + append mode?
+* **Plan A (template-first):** build a reusable AcroForm template with all rows ahead of time, then sign each row in append mode.
+* **Plan B (lazy-inject):** start from a static PDF without a form; each signing step injects the current row's fields and
+  signature widget into a new revision before signing it.
 
-* **DocMDP certification** locks the overall document to allow only form filling and additional signatures. Any structural change that is not permitted would invalidate the certification signature.
-* **Append mode** (`useAppendMode`) ensures each new signature revision is stored incrementally. Earlier signatures stay valid for their historical revision, which is mandatory for multi-timepoint workflows like nursing logs.
-* **FieldMDP (INCLUDE)** lets each signature lock only the fields it owns. After signing row _n_, the fields `row{n}.time`, `row{n}.text`, `row{n}.nurse` become read-only while the other rows remain editable for future shifts.
+The implementation uses Java 17, Maven, iText 7, and BouncyCastle.
 
 ## Build
 
@@ -15,57 +16,173 @@ cd pdf-incremental-sign-demo
 mvn -q -DskipTests package
 ```
 
-The build produces `target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar` which can be executed with `java -jar`.
+The shaded CLI is generated at
+`target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar`.
 
-## Step-by-step CLI demo
+## CLI overview
 
 ```bash
-cd pdf-incremental-sign-demo
+java -jar target/...jar app --help
+```
 
-# 0) Create a demo signer certificate (optional)
+### `create-template`
+
+```
+create-template --out <file> [--rows N] [--certP12 p12] [--password pwd]
+```
+
+Builds an A4 one-page nursing form with *N* rows and pre-defined field names
+(`row{n}.time`, `row{n}.text`, `row{n}.nurse`, `sig_row_{n}`). The command applies a
+DocMDP certification (form-fill & signatures). If `--certP12` is omitted a demo
+certificate is generated automatically.
+
+### `sign-row`
+
+```
+sign-row --src <in> --dest <out> --row <n> --time <text> --text <text> \
+         --nurse <name> --pkcs12 <p12> --password <pwd> [--tsaUrl <url>] \
+         [--mode template|inject|auto] [--page p] [--certify-on-first-inject]
+```
+
+Signs a single row in append mode. Common parameters supply the row index and the field values. The
+`--mode` switch controls the workflow:
+
+* `template` – assume the AcroForm already contains the row. The command only fills and signs.
+* `inject` – create the row's fields and signature widget if they are missing, then sign.
+* `auto` (default) – detect the mode automatically.
+
+`--certify-on-first-inject` promotes the first inject signature to a DocMDP certification when no DocMDP is present yet.
+`--page` specifies the page that holds the row layout (defaults to 1).
+
+### `verify`
+
+```
+verify --pdf <file>
+```
+
+Lists signatures, their revision coverage, integrity result, DocMDP status, and the FieldMDP locks that each signature enforces.
+
+### `certify`
+
+```
+certify --src <in> --dest <out> [--certP12 p12] [--password pwd]
+```
+
+Applies a DocMDP certification to an existing PDF using append mode. This is useful when a hospital needs to certify a static
+layout before running Plan B.
+
+## Usage examples
+
+### Plan A (template-first)
+
+```bash
+# 0) Generate a signer certificate (optional)
 java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar \
   gen-demo-p12 --out demo-signer.p12 --password 123456 --cn "Demo Nurse"
 
-# 1) Create the template with DocMDP certification
+# 1) Create template with 3 rows and certify
 java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar \
-  create-template --out nursing_record_template.pdf --cert demo-signer.p12 --password 123456
+  create-template \
+  --out nursing_template.pdf \
+  --rows 3 \
+  --certP12 demo-signer.p12 \
+  --password 123456
 
 # 2) 10:00 sign row 1
 java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar \
-  sign-row --src nursing_record_template.pdf --dest nursing_record_10.pdf \
+  sign-row \
+  --mode template \
+  --src nursing_template.pdf \
+  --dest nursing_10.pdf \
   --row 1 --time "10:00" \
   --text "这是第一条护理记录，10:00 护士查房" \
-  --nurse "Nurse Zhang" --pkcs12 demo-signer.p12 --password 123456
+  --nurse "Nurse Zhang" \
+  --pkcs12 demo-signer.p12 --password 123456
 
-# 3) 13:00 sign row 2 (append)
+# 3) 13:00 sign row 2
 java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar \
-  sign-row --src nursing_record_10.pdf --dest nursing_record_13.pdf \
+  sign-row \
+  --mode template \
+  --src nursing_10.pdf \
+  --dest nursing_13.pdf \
   --row 2 --time "13:00" \
   --text "这是第二条护理记录，13:00 护士查房" \
-  --nurse "Nurse Zhang" --pkcs12 demo-signer.p12 --password 123456
+  --nurse "Nurse Zhang" \
+  --pkcs12 demo-signer.p12 --password 123456
 
-# 4) 15:00 sign row 3 (append)
+# 4) 15:00 sign row 3
 java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar \
-  sign-row --src nursing_record_13.pdf --dest nursing_record_15.pdf \
+  sign-row \
+  --mode template \
+  --src nursing_13.pdf \
+  --dest nursing_15.pdf \
   --row 3 --time "15:00" \
   --text "这是第三条护理记录，15:00 护士查房" \
-  --nurse "Nurse Zhang" --pkcs12 demo-signer.p12 --password 123456
+  --nurse "Nurse Zhang" \
+  --pkcs12 demo-signer.p12 --password 123456
 
-# 5) Verify final PDF
+# 5) Verify
 java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar \
-  verify --pdf nursing_record_15.pdf
+  verify --pdf nursing_15.pdf
 ```
 
-## Inspecting the PDF
+### Plan B (lazy-inject on a static/scanned PDF)
 
-Open the resulting PDFs in Adobe Acrobat/Reader:
+```bash
+# Start from a plain PDF without an AcroForm, e.g. nursing_plain.pdf
 
-1. Each signature entry displays the signer name, time, and reason in the visible signature widget.
-2. Under **Signatures** panel, choose "Validate All" to confirm each revision. You can open each revision to see the state of the form at that time.
-3. Form fields for previously signed rows show lock icons and cannot be edited once their corresponding signature is applied, while unsigned rows remain editable.
+# 1) 10:00 inject row 1 fields + sign
+java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar \
+  sign-row \
+  --mode inject \
+  --src nursing_plain.pdf \
+  --dest nursing_10.pdf \
+  --row 1 --time "10:00" \
+  --text "这是第一条护理记录，10:00 护士查房" \
+  --nurse "Nurse Zhang" \
+  --pkcs12 demo-signer.p12 --password 123456 \
+  --certify-on-first-inject
 
-## Cautions
+# 2) 13:00 inject row 2 fields + sign (append)
+java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar \
+  sign-row \
+  --mode inject \
+  --src nursing_10.pdf \
+  --dest nursing_13.pdf \
+  --row 2 --time "13:00" \
+  --text "这是第二条护理记录，13:00 护士查房" \
+  --nurse "Nurse Zhang" \
+  --pkcs12 demo-signer.p12 --password 123456
 
-* Do not "optimize" or "print to PDF" after signing; these operations rewrite the file and destroy the incremental structure, invalidating previous signatures.
-* TSA/OCSP hooks are present but optional. Provide `--tsaUrl` to timestamp the signature if a TSA is available.
-* A future `--lang sm2` switch is reserved for integrating alternative crypto providers (not implemented yet).
+# 3) 15:00 inject row 3 fields + sign (append)
+java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar \
+  sign-row \
+  --mode inject \
+  --src nursing_13.pdf \
+  --dest nursing_15.pdf \
+  --row 3 --time "15:00" \
+  --text "这是第三条护理记录，15:00 护士查房" \
+  --nurse "Nurse Zhang" \
+  --pkcs12 demo-signer.p12 --password 123456
+
+# 4) Verify
+java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar \
+  verify --pdf nursing_15.pdf
+```
+
+If the plain PDF must be certified before any signatures, run `certify` once before step 1:
+
+```bash
+java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar \
+  certify --src nursing_plain.pdf --dest nursing_plain_certified.pdf \
+  --certP12 demo-signer.p12 --password 123456
+```
+
+## Notes
+
+* All signing operations use `useAppendMode()` to preserve prior revisions.
+* Field rectangles are computed by `LayoutUtil`, so the form scales to any row index the page can fit.
+* `verify` prints the DocMDP status, each signature's validity at its revision, and the FieldMDP(INCLUDE) targets so operators can
+  confirm which fields were locked.
+* The visible signature appearance contains the nurse, time, and reason in Chinese per the requirements. For production deployments
+  you may plug in a CJK font instead of Helvetica if precise glyph coverage is required.

@@ -4,6 +4,7 @@ import com.demo.crypto.DemoKeystoreUtil;
 import com.itextpdf.forms.PdfAcroForm;
 import com.itextpdf.forms.fields.PdfFormField;
 import com.itextpdf.kernel.pdf.PdfDocument;
+import com.itextpdf.kernel.pdf.PdfDictionary;
 import com.itextpdf.kernel.pdf.PdfName;
 import com.itextpdf.kernel.pdf.PdfReader;
 import com.itextpdf.kernel.pdf.PdfString;
@@ -26,6 +27,7 @@ public final class SignatureVerifier {
              PdfDocument document = new PdfDocument(reader)) {
             SignatureUtil signatureUtil = new SignatureUtil(document);
             List<String> names = signatureUtil.getSignatureNames();
+            System.out.println("[verify] DocMDP certified: " + DocMDPUtil.hasDocMDP(document));
             System.out.println("[verify] Signatures found: " + names.size());
             PdfAcroForm form = PdfAcroForm.getAcroForm(document, true);
             int exitCode = 0;
@@ -36,11 +38,13 @@ public final class SignatureVerifier {
                 boolean valid = pkcs7.verifySignatureIntegrityAndAuthenticity();
                 String subject = pkcs7.getSigningCertificate().getSubjectDN().getName();
                 Date signDate = pkcs7.getSignDate().getTime();
+                int revision = signatureUtil.getRevision(name);
+                int totalRevisions = signatureUtil.getTotalRevisions();
                 SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss Z", Locale.ROOT);
                 System.out.println("Signer CN: " + subject);
                 System.out.println("Sign date: " + sdf.format(signDate));
                 System.out.println("Covers whole document: " + coversWhole);
-                System.out.println("Valid at revision: " + valid);
+                System.out.println("Valid at revision: " + valid + " (" + revision + "/" + totalRevisions + ")");
                 if (!valid) {
                     exitCode = 2;
                 }
@@ -50,11 +54,13 @@ public final class SignatureVerifier {
                 }
                 if (sigField != null && sigField.getPdfObject().containsKey(PdfName.Lock)) {
                     System.out.println("Locked fields:");
-                    PdfString locked;
-                    com.itextpdf.kernel.pdf.PdfArray array = sigField.getPdfObject().getAsDictionary(PdfName.Lock).getAsArray(PdfName.Fields);
+                    PdfDictionary lockDict = sigField.getPdfObject().getAsDictionary(PdfName.Lock);
+                    com.itextpdf.kernel.pdf.PdfArray array = lockDict.getAsArray(PdfName.Fields);
+                    PdfName action = lockDict.getAsName(PdfName.Action);
+                    System.out.println(" Action: " + (action != null ? action.getValue() : "unknown"));
                     if (array != null) {
                         for (int i = 0; i < array.size(); i++) {
-                            locked = array.getAsString(i);
+                            PdfString locked = array.getAsString(i);
                             if (locked == null) {
                                 continue;
                             }
