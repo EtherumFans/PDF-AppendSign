@@ -19,6 +19,8 @@ import com.itextpdf.layout.element.Table;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Objects;
 
 /**
@@ -46,12 +48,48 @@ public class NursingRecordTemplate {
      * 生成护理记录单模板（无标题副标题重载，避免 create(...) 歧义）
      */
     public static void createTemplate(String dest, int rowCount) throws IOException {
-        Objects.requireNonNull(dest, "dest must not be null");
-        if (rowCount <= 0) rowCount = 10;
+        writeTemplate(Path.of(dest), rowCount);
+    }
 
+    /**
+     * 为兼容旧调用方保留的 create(...) 方法。若提供了 certPath，则会在生成模板后
+     * 对结果进行 DocMDP 认证；否则行为与 {@link #createTemplate(String, int)} 相同。
+     */
+    public static void create(String dest, int rowCount) throws IOException {
+        createTemplate(dest, rowCount);
+    }
+
+    public static void create(String dest, int rowCount, String certPath, String password) throws IOException {
+        Objects.requireNonNull(dest, "dest must not be null");
         ensureParentDir(dest);
 
-        try (PdfWriter writer = new PdfWriter(dest);
+        Path output = Path.of(dest);
+        boolean needsCertification = certPath != null && !certPath.isBlank();
+        Path workingFile = needsCertification ? Files.createTempFile("nursing-template", ".pdf") : output;
+
+        try {
+            writeTemplate(workingFile, rowCount);
+            if (needsCertification) {
+                try {
+                    NursingRecordSigner.certifyDocument(workingFile.toString(), output.toString(), certPath, password);
+                } catch (Exception e) {
+                    throw new IOException("Failed to certify nursing template", e);
+                }
+            }
+        } finally {
+            if (needsCertification) {
+                Files.deleteIfExists(workingFile);
+            }
+        }
+    }
+
+    private static void writeTemplate(Path destination, int rowCount) throws IOException {
+        Objects.requireNonNull(destination, "dest must not be null");
+        if (rowCount <= 0) rowCount = 10;
+
+        ensureParentDir(destination.toString());
+
+        try (PdfWriter writer = new PdfWriter(destination.toString());
              PdfDocument pdf = new PdfDocument(writer);
              Document doc = new Document(pdf)) {
 

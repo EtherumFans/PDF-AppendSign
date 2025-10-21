@@ -48,8 +48,14 @@ public class App {
         @Override
         public Integer call() throws Exception {
             System.out.println("[create-template] Starting");
-            NursingRecordTemplate.createTemplate(output.toAbsolutePath().toString(), rows);
-            System.out.println("[create-template] Template written to " + output.toAbsolutePath());
+            String dest = output.toAbsolutePath().toString();
+            if (certPath != null) {
+                NursingRecordTemplate.create(dest, rows, certPath.toAbsolutePath().toString(), password);
+                System.out.println("[create-template] Template certified and written to " + output.toAbsolutePath());
+            } else {
+                NursingRecordTemplate.createTemplate(dest, rows);
+                System.out.println("[create-template] Template written to " + output.toAbsolutePath());
+            }
             return 0;
         }
     }
