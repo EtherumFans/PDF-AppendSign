@@ -72,7 +72,7 @@
         <createDependencyReducedPom>false</createDependencyReducedPom>
         <transformers>
           <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-            <mainClass>com.demo.App</mainClass> <!-- »ò com.demo.pdf.NursingRecordTemplate -->
+            <mainClass>com.demo.App</mainClass> <!-- Â»Ã² com.demo.pdf.NursingRecordTemplate -->
           </transformer>
         </transformers>
       </configuration>
@@ -98,6 +98,16 @@
                             <mainClass>com.demo.App</mainClass>
                         </manifest>
                     </archive>
+                    <filters>
+                        <filter>
+                            <artifact>*:*</artifact>
+                            <excludes>
+                                <exclude>META-INF/*.SF</exclude>
+                                <exclude>META-INF/*.DSA</exclude>
+                                <exclude>META-INF/*.RSA</exclude>
+                            </excludes>
+                        </filter>
+                    </filters>
                     <descriptorRefs>
                         <descriptorRef>jar-with-dependencies</descriptorRef>
                     </descriptorRefs>
