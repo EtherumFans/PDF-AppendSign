@@ -172,4 +172,26 @@ public class NursingRecordTemplate {
             parent.mkdirs();
         }
     }
+
+    public static void main(String[] args) throws Exception {
+        // 1) 生成 10 行模板
+        String template = "target/nursing-template.pdf";
+        createTemplate(template, 10);
+
+        // 2) 按时段填充文本（不签名）
+        String filled10 = "target/nursing-10h.pdf";
+        fillRecord(template, filled10, 1, "10:00", "晨间巡视：生命体征平稳", "张三");
+
+        String filled13 = "target/nursing-13h.pdf";
+        fillRecord(filled10, filled13, 2, "13:00", "进餐后复测血糖，完成宣教", "李四");
+
+        String filled15 = "target/nursing-15h.pdf";
+        fillRecord(filled13, filled15, 3, "15:00", "更换静脉通道，病情观察", "王五");
+
+        System.out.println("已生成：");
+        System.out.println(" - " + template);
+        System.out.println(" - " + filled10);
+        System.out.println(" - " + filled13);
+        System.out.println(" - " + filled15);
+    }
 }
