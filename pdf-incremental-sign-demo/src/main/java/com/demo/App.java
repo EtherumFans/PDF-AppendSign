@@ -21,6 +21,7 @@ public class App {
                     CreateTemplate.class,
                     SignRow.class,
                     VerifyPdf.class,
+                    Certify.class,
                     GenDemoP12.class
             })
     static class Root implements Runnable {
@@ -35,7 +36,10 @@ public class App {
         @CommandLine.Option(names = "--out", required = true, description = "Destination PDF file")
         private Path output;
 
-        @CommandLine.Option(names = "--cert", required = false, description = "Path to PKCS#12 file for certification")
+        @CommandLine.Option(names = "--rows", defaultValue = "3", description = "Number of rows to create")
+        private int rows;
+
+        @CommandLine.Option(names = "--certP12", required = false, description = "Path to PKCS#12 file for certification")
         private Path certPath;
 
         @CommandLine.Option(names = "--password", required = false, description = "Password for PKCS#12")
@@ -45,7 +49,7 @@ public class App {
         public Integer call() throws Exception {
             System.out.println("[create-template] Starting");
             String cert = certPath != null ? certPath.toAbsolutePath().toString() : null;
-            NursingRecordTemplate.create(output.toAbsolutePath().toString(), cert, password);
+            NursingRecordTemplate.create(output.toAbsolutePath().toString(), rows, cert, password);
             System.out.println("[create-template] Template written to " + output.toAbsolutePath());
             return 0;
         }
@@ -59,7 +63,7 @@ public class App {
         @CommandLine.Option(names = "--dest", required = true, description = "Destination PDF with appended signature")
         private Path destination;
 
-        @CommandLine.Option(names = "--row", required = true, description = "Row number to sign (1-3)")
+        @CommandLine.Option(names = "--row", required = true, description = "Row number to sign (1-based)")
         private int row;
 
         @CommandLine.Option(names = "--time", required = true, description = "Row time text")
@@ -80,13 +84,19 @@ public class App {
         @CommandLine.Option(names = "--tsaUrl", required = false, description = "Optional TSA URL")
         private String tsaUrl;
 
-        @CommandLine.Option(names = "--lang", required = false, description = "Future crypto provider switch (e.g. sm2)")
-        private String lang;
+        @CommandLine.Option(names = "--mode", required = false, description = "Signing mode: template, inject, or auto", defaultValue = "auto")
+        private String mode;
+
+        @CommandLine.Option(names = "--page", required = false, description = "Page number where the row lives", defaultValue = "1")
+        private int page;
+
+        @CommandLine.Option(names = "--certify-on-first-inject", description = "Apply DocMDP certification when injecting for the first time")
+        private boolean certifyOnFirstInject;
 
         @Override
         public Integer call() throws Exception {
-            if (row < 1 || row > 3) {
-                throw new IllegalArgumentException("Row must be between 1 and 3");
+            if (row < 1) {
+                throw new IllegalArgumentException("Row must be at least 1");
             }
             NursingRecordSigner.SignParams params = new NursingRecordSigner.SignParams();
             params.setSource(source.toAbsolutePath().toString());
@@ -98,7 +108,9 @@ public class App {
             params.setPkcs12Path(pkcs12 != null ? pkcs12.toAbsolutePath().toString() : null);
             params.setPassword(password);
             params.setTsaUrl(tsaUrl);
-            params.setLang(lang);
+            params.setMode(mode);
+            params.setPage(page);
+            params.setCertifyOnFirstInject(certifyOnFirstInject);
             NursingRecordSigner.signRow(params);
             System.out.println("[sign-row] Signed row " + row + " -> " + destination.toAbsolutePath());
             return 0;
@@ -113,6 +125,30 @@ public class App {
         @Override
         public Integer call() throws Exception {
             return SignatureVerifier.verify(pdf.toAbsolutePath().toString());
+        }
+    }
+
+    @CommandLine.Command(name = "certify", description = "Apply DocMDP certification to an existing PDF in append mode")
+    static class Certify implements Callable<Integer> {
+        @CommandLine.Option(names = "--src", required = true, description = "Source PDF")
+        private Path source;
+
+        @CommandLine.Option(names = "--dest", required = true, description = "Destination PDF")
+        private Path destination;
+
+        @CommandLine.Option(names = "--certP12", required = false, description = "PKCS#12 file for certification")
+        private Path cert;
+
+        @CommandLine.Option(names = "--password", required = false, description = "Password for the PKCS#12")
+        private String password;
+
+        @Override
+        public Integer call() throws Exception {
+            DemoKeystoreUtil.ensureProvider();
+            String certPath = cert != null ? cert.toAbsolutePath().toString() : null;
+            NursingRecordSigner.certifyDocument(source.toAbsolutePath().toString(), destination.toAbsolutePath().toString(), certPath, password);
+            System.out.println("[certify] Certification applied -> " + destination.toAbsolutePath());
+            return 0;
         }
     }
 
