@@ -49,7 +49,7 @@ public class App {
         public Integer call() throws Exception {
             System.out.println("[create-template] Starting");
             String cert = certPath != null ? certPath.toAbsolutePath().toString() : null;
-            NursingRecordTemplate.create(output.toAbsolutePath().toString(), rows, cert, password);
+            NursingRecordTemplate.createTemplate(output.toAbsolutePath().toString(), rows, cert, password);
             System.out.println("[create-template] Template written to " + output.toAbsolutePath());
             return 0;
         }

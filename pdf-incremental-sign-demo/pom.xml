@@ -11,44 +11,44 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <itext.version>7.2.5</itext.version>
         <picocli.version>4.7.6</picocli.version>
-        <bouncycastle.version>1.70</bouncycastle.version>
+        <bc.version>1.78.1</bc.version>
     </properties>
 
     <dependencies>
         <dependency>
             <groupId>com.itextpdf</groupId>
-            <artifactId>itext-sign</artifactId>
+            <artifactId>sign</artifactId>
             <version>${itext.version}</version>
         </dependency>
         <dependency>
             <groupId>com.itextpdf</groupId>
-            <artifactId>itext-kernel</artifactId>
+            <artifactId>kernel</artifactId>
             <version>${itext.version}</version>
         </dependency>
         <dependency>
             <groupId>com.itextpdf</groupId>
-            <artifactId>itext-forms</artifactId>
+            <artifactId>forms</artifactId>
             <version>${itext.version}</version>
         </dependency>
         <dependency>
             <groupId>com.itextpdf</groupId>
-            <artifactId>itext-layout</artifactId>
+            <artifactId>layout</artifactId>
             <version>${itext.version}</version>
         </dependency>
         <dependency>
             <groupId>com.itextpdf</groupId>
-            <artifactId>itext-io</artifactId>
+            <artifactId>io</artifactId>
             <version>${itext.version}</version>
         </dependency>
         <dependency>
             <groupId>org.bouncycastle</groupId>
-            <artifactId>bcprov-jdk15on</artifactId>
-            <version>${bouncycastle.version}</version>
+            <artifactId>bcprov-jdk18on</artifactId>
+            <version>${bc.version}</version>
         </dependency>
         <dependency>
             <groupId>org.bouncycastle</groupId>
-            <artifactId>bcpkix-jdk15on</artifactId>
-            <version>${bouncycastle.version}</version>
+            <artifactId>bcpkix-jdk18on</artifactId>
+            <version>${bc.version}</version>
         </dependency>
         <dependency>
             <groupId>info.picocli</groupId>

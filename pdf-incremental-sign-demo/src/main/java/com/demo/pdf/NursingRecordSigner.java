@@ -3,7 +3,6 @@ package com.demo.pdf;
 import com.demo.crypto.DemoKeystoreUtil;
 import com.itextpdf.forms.PdfAcroForm;
 import com.itextpdf.forms.fields.PdfFormField;
-import com.itextpdf.forms.fields.PdfSignatureFormField;
 import com.itextpdf.forms.fields.PdfTextFormField;
 import com.itextpdf.io.font.constants.StandardFonts;
 import com.itextpdf.kernel.geom.Rectangle;
@@ -11,6 +10,8 @@ import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfReader;
 import com.itextpdf.kernel.pdf.StampingProperties;
 import com.itextpdf.kernel.pdf.annot.PdfWidgetAnnotation;
+import com.itextpdf.kernel.pdf.PdfName;
+import com.itextpdf.forms.fields.PdfSignatureFormField;
 import com.itextpdf.signatures.BouncyCastleDigest;
 import com.itextpdf.signatures.DigestAlgorithms;
 import com.itextpdf.signatures.IExternalDigest;
@@ -209,7 +210,7 @@ public final class NursingRecordSigner {
                     LayoutUtil.FieldSlot.TEXT, true, effectiveMode);
             PdfTextFormField nurseField = resolveTextField(document, form, params.getPage(), pageSize, params.getRow(), nurseName,
                     LayoutUtil.FieldSlot.NURSE, false, effectiveMode);
-            PdfSignatureFormField sigField = resolveSignatureField(document, form, params.getPage(), pageSize, params.getRow(), sigName,
+            PdfFormField sigField = resolveSignatureField(document, form, params.getPage(), pageSize, params.getRow(), sigName,
                     effectiveMode);
 
             timeField.setValue(params.getTimeValue());
@@ -320,8 +321,8 @@ public final class NursingRecordSigner {
         return textField;
     }
 
-    private static PdfSignatureFormField resolveSignatureField(PdfDocument document, PdfAcroForm form, int pageNumber,
-                                                                Rectangle pageSize, int row, String name, SigningMode mode) {
+    private static PdfFormField resolveSignatureField(PdfDocument document, PdfAcroForm form, int pageNumber,
+                                                      Rectangle pageSize, int row, String name, SigningMode mode) {
         PdfFormField field = form.getField(name);
         if (field == null) {
             if (mode != SigningMode.INJECT) {
@@ -333,9 +334,13 @@ public final class NursingRecordSigner {
             form.addField(createdField, document.getPage(pageNumber));
             field = createdField;
         }
-        if (!(field instanceof PdfSignatureFormField)) {
+        PdfName formType = field.getFormType();
+        if (formType == null) {
+            formType = field.getPdfObject().getAsName(PdfName.FT);
+        }
+        if (!PdfName.Sig.equals(formType)) {
             throw new IllegalStateException("Field is not a signature field: " + name);
         }
-        return (PdfSignatureFormField) field;
+        return field;
     }
 }
