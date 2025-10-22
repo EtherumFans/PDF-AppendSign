@@ -9,7 +9,6 @@ import com.itextpdf.kernel.pdf.PdfName;
 import com.itextpdf.kernel.pdf.PdfReader;
 import com.itextpdf.kernel.pdf.PdfString;
 import com.itextpdf.signatures.PdfPKCS7;
-import com.itextpdf.signatures.PdfSigner;
 import com.itextpdf.signatures.SignatureUtil;
 
 import java.text.SimpleDateFormat;
@@ -37,16 +36,13 @@ public final class SignatureVerifier {
             List<SignatureDetails> details = new ArrayList<>();
             SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss Z", Locale.ROOT);
             for (String name : names) {
-                PdfPKCS7 pkcs7 = PdfSigner.verifySignature(document, name);
-                boolean valid = pkcs7 != null && pkcs7.verify();
+                PdfPKCS7 pkcs7 = signatureUtil.verifySignature(name);
+                boolean valid = pkcs7 != null && pkcs7.verifySignatureIntegrityAndAuthenticity();
                 if (!valid) {
                     exitCode = 2;
                 }
                 PdfFormField sigField = form != null ? form.getField(name) : null;
-                PdfDictionary sigDict = null;
-                if (sigField != null && sigField.getValue() != null) {
-                    sigDict = sigField.getValue().getAsDictionary();
-                }
+                PdfDictionary sigDict = signatureUtil.getSignatureDictionary(name);
                 PdfName filter = sigDict != null ? sigDict.getAsName(PdfName.Filter) : null;
                 PdfName subFilter = sigDict != null ? sigDict.getAsName(PdfName.SubFilter) : null;
                 System.out.println(name + " Filter=" + formatPdfName(filter)
