@@ -184,14 +184,17 @@ java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.ja
   --certP12 demo-signer.p12 --password 123456
 ```
 
-## Adobe verification checklist
+## Adobe verification
 
-After each `sign-row`, open the output in **Adobe Acrobat/Reader** and confirm:
+* Open the signed PDF in **Adobe Acrobat/Reader** and check the **Signatures** panel – it should list `sig_row_1`, `sig_row_2`, … for every signed row.
+* Each signing produces a slightly larger file size because append mode writes a new incremental revision instead of overwriting earlier bytes.
+* Earlier signatures remain valid when you inspect previous revisions in Acrobat’s “View Signed Version” workflow.
 
-1. The **Signatures** panel lists `sig_row_n` entries (e.g. “Signature1 (sig_row_1)”) with a valid status.
-2. The visible appearance sits inside the target row's signature widget with nurse/time text rendered correctly.
-3. The fields `rowN.time`, `rowN.text`, and `rowN.nurse` are read-only, while other rows remain editable.
-4. The file size increased compared to the previous revision, indicating an incremental update.
+For a more detailed checklist after each `sign-row` run:
+
+1. The visible appearance sits inside the target row's signature widget with nurse/time text rendered correctly.
+2. The fields `rowN.time`, `rowN.text`, and `rowN.nurse` are read-only, while other rows remain editable.
+3. The file size increased compared to the previous revision, indicating an incremental update.
 
 ## Notes
 

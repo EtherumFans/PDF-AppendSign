@@ -23,8 +23,8 @@ import com.itextpdf.signatures.IExternalSignature;
 import com.itextpdf.signatures.PdfSignatureAppearance;
 import com.itextpdf.signatures.PdfSigner;
 import com.itextpdf.signatures.PrivateKeySignature;
-import com.itextpdf.signatures.TSAClientBouncyCastle;
 import com.itextpdf.signatures.SignatureUtil;
+import com.itextpdf.signatures.TSAClientBouncyCastle;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 
 import java.io.FileOutputStream;
@@ -255,8 +255,9 @@ public final class NursingRecordSigner {
             signer.setFieldName(sigName);
             PdfSignatureAppearance appearance = signer.getSignatureAppearance();
             appearance.setReuseAppearance(false);
+            Rectangle sigRect = LayoutUtil.sigRectForRow(document, signatureContext.getPageNumber(), params.getRow());
             appearance.setPageNumber(signatureContext.getPageNumber());
-            appearance.setPageRect(signatureContext.getRect());
+            appearance.setPageRect(sigRect);
             appearance.setReason("Nursing note " + params.getTimeValue());
             appearance.setLocation("Ward A");
             String layer2 = String.format("护士: %s\n时间: %s\n事由: Nursing note %s",
@@ -286,6 +287,22 @@ public final class NursingRecordSigner {
         }
         if (!report.getFieldNames().contains(sigName)) {
             throw new IllegalStateException("Verification did not find signature field " + sigName);
+        }
+        SignatureVerifier.SignatureDetails details = report.getSignatureByName(sigName);
+        if (details == null) {
+            throw new IllegalStateException("Signature report did not include details for " + sigName);
+        }
+        PdfName filter = details.getFilter();
+        if (!PdfName.Adobe_PPKLite.equals(filter)) {
+            String actual = filter != null ? "/" + filter.getValue() : "null";
+            throw new IllegalStateException("Signature filter for " + sigName + " was " + actual
+                    + ", expected /Adobe.PPKLite");
+        }
+        PdfName subFilter = details.getSubFilter();
+        if (!PdfName.adbe_pkcs7_detached.equals(subFilter)) {
+            String actual = subFilter != null ? "/" + subFilter.getValue() : "null";
+            throw new IllegalStateException("Signature subfilter for " + sigName + " was " + actual
+                    + ", expected /adbe.pkcs7.detached");
         }
         System.out.println("[sign-row] Signature applied in append mode");
     }
