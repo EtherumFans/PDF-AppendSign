@@ -10,6 +10,7 @@ import com.itextpdf.io.font.constants.StandardFonts;
 import com.itextpdf.kernel.font.PdfFont;
 import com.itextpdf.kernel.font.PdfFontFactory;
 import com.itextpdf.kernel.geom.Rectangle;
+import com.itextpdf.kernel.pdf.PdfDictionary;
 import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfName;
 import com.itextpdf.kernel.pdf.PdfReader;
@@ -20,6 +21,7 @@ import com.itextpdf.signatures.BouncyCastleDigest;
 import com.itextpdf.signatures.DigestAlgorithms;
 import com.itextpdf.signatures.IExternalDigest;
 import com.itextpdf.signatures.IExternalSignature;
+import com.itextpdf.signatures.PdfPKCS7;
 import com.itextpdf.signatures.PdfSignatureAppearance;
 import com.itextpdf.signatures.PdfSigner;
 import com.itextpdf.signatures.PrivateKeySignature;
@@ -280,29 +282,44 @@ public final class NursingRecordSigner {
             throw new IllegalStateException("Destination PDF did not grow after signing; aborting to avoid overwriting");
         }
 
-        SignatureVerifier.SignatureReport report = SignatureVerifier.verify(destPath.toString());
-        if (report.totalSignatures() != initialSignatureCount + 1) {
-            throw new IllegalStateException("Expected signature count to increase by 1 (" + initialSignatureCount + " -> "
-                    + (initialSignatureCount + 1) + ") but got " + report.totalSignatures());
-        }
-        if (!report.getFieldNames().contains(sigName)) {
-            throw new IllegalStateException("Verification did not find signature field " + sigName);
-        }
-        SignatureVerifier.SignatureDetails details = report.getSignatureByName(sigName);
-        if (details == null) {
-            throw new IllegalStateException("Signature report did not include details for " + sigName);
-        }
-        PdfName filter = details.getFilter();
-        if (!PdfName.Adobe_PPKLite.equals(filter)) {
-            String actual = filter != null ? "/" + filter.getValue() : "null";
-            throw new IllegalStateException("Signature filter for " + sigName + " was " + actual
-                    + ", expected /Adobe.PPKLite");
-        }
-        PdfName subFilter = details.getSubFilter();
-        if (!PdfName.Adbe_pkcs7_detached.equals(subFilter)) {
-            String actual = subFilter != null ? "/" + subFilter.getValue() : "null";
-            throw new IllegalStateException("Signature subfilter for " + sigName + " was " + actual
-                    + ", expected /adbe.pkcs7.detached");
+        try (PdfDocument pdf = new PdfDocument(new PdfReader(destPath.toString()))) {
+            PdfAcroForm acro = PdfAcroForm.getAcroForm(pdf, false);
+            if (acro == null) {
+                throw new IllegalStateException("Signed document has no AcroForm");
+            }
+            SignatureUtil util = new SignatureUtil(pdf);
+            List<String> names = util.getSignatureNames();
+            if (names.size() != initialSignatureCount + 1) {
+                throw new IllegalStateException("Expected signature count to increase by 1 (" + initialSignatureCount + " -> "
+                        + (initialSignatureCount + 1) + ") but got " + names.size());
+            }
+            if (!names.contains(sigName)) {
+                throw new IllegalStateException("Verification did not find signature field " + sigName);
+            }
+            PdfFormField field = acro.getField(sigName);
+            if (field == null) {
+                throw new IllegalStateException("AcroForm is missing signature field " + sigName + " after signing");
+            }
+            PdfDictionary sigDict = field.getValue() != null ? field.getValue().getAsDictionary() : null;
+            if (sigDict == null) {
+                throw new IllegalStateException("Signature field " + sigName + " has no dictionary value");
+            }
+            PdfName filter = sigDict.getAsName(PdfName.Filter);
+            if (!PdfName.Adobe_PPKLite.equals(filter)) {
+                String actual = filter != null ? "/" + filter.getValue() : "null";
+                throw new IllegalStateException("Signature filter for " + sigName + " was " + actual
+                        + ", expected /Adobe.PPKLite");
+            }
+            PdfName subFilter = sigDict.getAsName(PdfName.SubFilter);
+            if (!PdfName.Adbe_pkcs7_detached.equals(subFilter)) {
+                String actual = subFilter != null ? "/" + subFilter.getValue() : "null";
+                throw new IllegalStateException("Signature subfilter for " + sigName + " was " + actual
+                        + ", expected /adbe.pkcs7.detached");
+            }
+            PdfPKCS7 pkcs7 = PdfSigner.verifySignature(pdf, sigName);
+            if (pkcs7 == null || !pkcs7.verifySignatureIntegrityAndAuthenticity()) {
+                throw new IllegalStateException("Signature " + sigName + " failed integrity verification");
+            }
         }
         System.out.println("[sign-row] Signature applied in append mode");
     }
