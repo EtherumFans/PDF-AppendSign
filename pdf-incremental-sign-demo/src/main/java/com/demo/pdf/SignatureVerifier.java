@@ -7,7 +7,6 @@ import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfName;
 import com.itextpdf.kernel.pdf.PdfReader;
 import com.itextpdf.signatures.PdfPKCS7;
-import com.itextpdf.signatures.PdfSigner;
 import com.itextpdf.signatures.SignatureUtil;
 
 import java.util.Collections;
@@ -26,33 +25,34 @@ public class SignatureVerifier {
 
             if (names.isEmpty()) {
                 System.out.println("No field-bound signatures found (Adobe panel will be empty).");
-                return 2; // non-zero so CI/CLI can catch it
+                return 2;
             }
 
             int invalid = 0;
             for (String name : names) {
-                PdfPKCS7 pk = PdfSigner.verifySignature(pdf, name); // <- correct API
-                boolean valid = pk.verifySignatureIntegrityAndAuthenticity();
+                // 1) Read PKCS7 via SignatureUtil (works across iText 7.x)
+                PdfPKCS7 pk = su.readSignatureData(name);
+                boolean ok = pk.verifySignatureIntegrityAndAuthenticity();
 
-                PdfFormField field = acro.getField(name);
-                PdfDictionary sigDict = (field != null && field.getValue() != null)
-                        ? field.getValue().getAsDictionary()
-                        : null;
+                // 2) Get /Filter and /SubFilter from the field's /V dictionary
+                PdfFormField field   = acro.getField(name);
+                PdfDictionary fDict  = (field != null) ? field.getPdfObject() : null;
+                PdfDictionary sigDict= (fDict != null) ? fDict.getAsDictionary(PdfName.V) : null;
 
-                PdfName filter = sigDict != null ? sigDict.getAsName(PdfName.Filter) : null;
-                PdfName subFilter = sigDict != null ? sigDict.getAsName(PdfName.SubFilter) : null;
+                PdfName filter    = (sigDict != null) ? sigDict.getAsName(PdfName.Filter)    : null;
+                PdfName subFilter = (sigDict != null) ? sigDict.getAsName(PdfName.SubFilter) : null;
 
                 System.out.printf(" - %s | Filter=%s, SubFilter=%s, Valid=%s, SignDate=%s, SubjectCN=%s%n",
                         name,
                         (filter != null ? filter.getValue() : "null"),
                         (subFilter != null ? subFilter.getValue() : "null"),
-                        valid,
+                        ok,
                         pk.getSignDate(),
                         pk.getSigningCertificate() != null
                                 ? pk.getSigningCertificate().getSubjectX500Principal().getName()
                                 : "N/A"
                 );
-                if (!valid) invalid++;
+                if (!ok) invalid++;
             }
             return invalid == 0 ? 0 : 3;
         }

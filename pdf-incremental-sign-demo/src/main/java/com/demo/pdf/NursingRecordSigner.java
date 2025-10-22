@@ -300,7 +300,8 @@ public final class NursingRecordSigner {
             if (field == null) {
                 throw new IllegalStateException("AcroForm is missing signature field " + sigName + " after signing");
             }
-            PdfDictionary sigDict = field.getValue() != null ? field.getValue().getAsDictionary() : null;
+            PdfDictionary fieldDict = field.getPdfObject();
+            PdfDictionary sigDict = fieldDict != null ? fieldDict.getAsDictionary(PdfName.V) : null;
             if (sigDict == null) {
                 throw new IllegalStateException("Signature field " + sigName + " has no dictionary value");
             }
@@ -316,7 +317,7 @@ public final class NursingRecordSigner {
                 throw new IllegalStateException("Signature subfilter for " + sigName + " was " + actual
                         + ", expected /adbe.pkcs7.detached");
             }
-            PdfPKCS7 pkcs7 = PdfSigner.verifySignature(pdf, sigName);
+            PdfPKCS7 pkcs7 = util.readSignatureData(sigName);
             if (pkcs7 == null || !pkcs7.verifySignatureIntegrityAndAuthenticity()) {
                 throw new IllegalStateException("Signature " + sigName + " failed integrity verification");
             }
