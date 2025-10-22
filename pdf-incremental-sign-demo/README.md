@@ -66,7 +66,8 @@ Every signing step checks that the output PDF grew in size and re-verifies the d
 verify --pdf <file>
 ```
 
-Lists signatures, their revision coverage, integrity result, DocMDP status, and the FieldMDP locks that each signature enforces.
+Prints field-bound signatures with their filter/subfilter, signer identity, and integrity result. Exits with a non-zero status
+when no AcroForm-bound signatures exist or any signature fails validation.
 
 ### `certify`
 
@@ -184,23 +185,32 @@ java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.ja
   --certP12 demo-signer.p12 --password 123456
 ```
 
-## Adobe verification
+## Adobe verification checklist
 
-* Open the signed PDF in **Adobe Acrobat/Reader** and check the **Signatures** panel – it should list `sig_row_1`, `sig_row_2`, … for every signed row.
+After each `sign-row`, run the CLI verifier to ensure Adobe-friendly metadata is present:
+
+```
+mvn -q -DskipTests exec:java \
+  -Dexec.mainClass=com.demo.pdf.SignatureVerifier \
+  -Dexec.args="care-record_2.pdf"
+```
+
+Expect the console output to show at least one entry in “AcroForm signatures”, along with
+`Filter=/Adobe.PPKLite` and `SubFilter=/adbe.pkcs7.detached` for each signed field. If the list is empty, the signature is not
+bound to the field’s `/V` entry and Adobe Acrobat will not display it.
+
+Additional manual checks in Acrobat Reader:
+
+* Open the PDF and inspect the **Signatures** panel – `sig_row_1`, `sig_row_2`, … should appear for every signed row.
 * Each signing produces a slightly larger file size because append mode writes a new incremental revision instead of overwriting earlier bytes.
-* Earlier signatures remain valid when you inspect previous revisions in Acrobat’s “View Signed Version” workflow.
-
-For a more detailed checklist after each `sign-row` run:
-
-1. The visible appearance sits inside the target row's signature widget with nurse/time text rendered correctly.
-2. The fields `rowN.time`, `rowN.text`, and `rowN.nurse` are read-only, while other rows remain editable.
-3. The file size increased compared to the previous revision, indicating an incremental update.
+* Earlier signatures remain valid when you inspect previous revisions via Acrobat’s “View Signed Version”.
 
 ## Notes
 
 * All signing operations use `useAppendMode()` to preserve prior revisions.
 * Field rectangles are computed by `LayoutUtil`, so the form scales to any row index the page can fit.
-* `verify` prints the DocMDP status, SubFilter, revision coverage, and FieldMDP(INCLUDE) targets plus their read-only status.
+* `verify` prints each signature's filter/subfilter, signer CN, sign date, and validation result so you can cross-check Adobe's
+  Signatures panel.
 * The CLI attempts to embed `fonts/NotoSansCJKsc-Regular.otf` for CJK text; if unavailable it falls back to Helvetica.
 
 ## Minimal smoke test
