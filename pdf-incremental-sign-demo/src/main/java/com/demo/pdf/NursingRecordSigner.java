@@ -373,7 +373,7 @@ public final class NursingRecordSigner {
             int flags = widget.getFlags() | PdfAnnotation.PRINT;
             flags &= ~PdfAnnotation.HIDDEN;
             flags &= ~PdfAnnotation.INVISIBLE;
-            flags &= ~PdfAnnotation.NOVIEW;
+            flags &= ~PdfAnnotation.TOGGLE_NO_VIEW;
             widget.setFlags(flags);
             return new SignatureFieldContext(createdField, widget, rect, pageNumber);
         }
@@ -414,7 +414,7 @@ public final class NursingRecordSigner {
         if ((flags & PdfAnnotation.PRINT) == 0) {
             throw new IllegalStateException("Signature widget " + name + " is not printable (missing PRINT flag)");
         }
-        if ((flags & (PdfAnnotation.HIDDEN | PdfAnnotation.INVISIBLE | PdfAnnotation.NOVIEW)) != 0) {
+        if ((flags & (PdfAnnotation.HIDDEN | PdfAnnotation.INVISIBLE | PdfAnnotation.TOGGLE_NO_VIEW)) != 0) {
             throw new IllegalStateException("Signature widget " + name + " is hidden or not viewable");
         }
         return new SignatureFieldContext(field, targetWidget, widgetRect, pageNumber);
@@ -424,9 +424,11 @@ public final class NursingRecordSigner {
         try {
             Path bundled = Path.of("fonts", "NotoSansCJKsc-Regular.otf");
             if (Files.exists(bundled)) {
-                return PdfFontFactory.createFont(bundled.toAbsolutePath().toString(), PdfEncodings.IDENTITY_H, true);
+                return PdfFontFactory.createFont(bundled.toAbsolutePath().toString(), PdfEncodings.IDENTITY_H,
+                        PdfFontFactory.EmbeddingStrategy.PREFER_EMBEDDED);
             }
-            return PdfFontFactory.createFont("NotoSansCJKsc-Regular.otf", PdfEncodings.IDENTITY_H, true);
+            return PdfFontFactory.createFont("NotoSansCJKsc-Regular.otf", PdfEncodings.IDENTITY_H,
+                    PdfFontFactory.EmbeddingStrategy.PREFER_EMBEDDED);
         } catch (Exception e) {
             System.out.println("[sign-row] CJK font unavailable (" + e.getMessage() + "); falling back to Helvetica");
             try {
