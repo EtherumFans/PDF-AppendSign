@@ -13,6 +13,7 @@ import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfName;
 import com.itextpdf.kernel.pdf.PdfReader;
 import com.itextpdf.kernel.pdf.PdfWriter;
+import com.itextpdf.kernel.pdf.annot.PdfAnnotation;
 import com.itextpdf.layout.Document;
 import com.itextpdf.layout.borders.SolidBorder;
 import com.itextpdf.layout.element.Paragraph;
@@ -124,6 +125,7 @@ public class NursingRecordTemplate {
                 sig.setFieldName(FIELD_SIGN_PREFIX + i);
                 // 绑定到第一页：addField 的第二个参数就是页面对象；不再调用 setPage(...)
                 sig.getWidgets().get(0).setHighlightMode(PdfName.N);
+                sig.getWidgets().get(0).setFlags(PdfAnnotation.PRINT);
                 form.addField(sig, pdf.getFirstPage());
             }
 

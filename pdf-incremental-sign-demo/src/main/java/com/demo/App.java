@@ -133,7 +133,7 @@ public class App {
 
         @Override
         public Integer call() throws Exception {
-            return SignatureVerifier.verify(pdf.toAbsolutePath().toString());
+            return SignatureVerifier.verify(pdf.toAbsolutePath().toString()).exitCode();
         }
     }
 

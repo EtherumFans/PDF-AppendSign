@@ -10,14 +10,15 @@ public final class FormUtil {
     private FormUtil() {
     }
 
-    public static PdfAcroForm ensureAcroForm(PdfDocument document) {
-        PdfAcroForm form = PdfAcroForm.getAcroForm(document, false);
-        if (form == null) {
-            form = PdfAcroForm.getAcroForm(document, true);
-        }
-        if (form.getPdfObject().getAsName(PdfName.DA) == null) {
+    public static PdfAcroForm prepareAcroForm(PdfDocument document) {
+        PdfAcroForm form = PdfAcroForm.getAcroForm(document, true);
+        ensureNeedAppearances(form);
+        return form;
+    }
+
+    public static void ensureNeedAppearances(PdfAcroForm form) {
+        if (form != null && form.getPdfObject().getAsName(PdfName.DA) == null) {
             form.getPdfObject().put(PdfName.NeedAppearances, PdfBoolean.TRUE);
         }
-        return form;
     }
 }
