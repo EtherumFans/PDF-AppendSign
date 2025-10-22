@@ -1,6 +1,7 @@
 package com.demo.pdf;
 
 import com.itextpdf.kernel.geom.Rectangle;
+import com.itextpdf.kernel.pdf.PdfDocument;
 
 /**
  * Utility to compute row geometry for the nursing record forms.
@@ -61,6 +62,13 @@ public final class LayoutUtil {
 
     public static Rectangle getSignatureAppearanceRect(Rectangle pageSize, int rowIndex) {
         return getFieldRect(pageSize, rowIndex, FieldSlot.SIGNATURE);
+    }
+
+    public static Rectangle sigRectForRow(PdfDocument document, int pageNumber, int rowIndex) {
+        if (document == null) {
+            throw new IllegalArgumentException("document must not be null");
+        }
+        return getFieldRect(document.getPage(pageNumber).getPageSize(), rowIndex, FieldSlot.SIGNATURE);
     }
 
     private static float rowTop(Rectangle pageSize, int rowIndex) {

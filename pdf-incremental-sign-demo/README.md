@@ -49,14 +49,16 @@ sign-row --src <in> --dest <out> --row <n> --time <text> --text <text> \
 ```
 
 Signs a single row in append mode. Common parameters supply the row index and the field values. The
-`--mode` switch controls the workflow:
+`--mode` switch controls the workflow and enforces a real signature field named `sig_row_{n}`:
 
-* `template` – assume the AcroForm already contains the row. The command only fills and signs.
-* `inject` – create the row's fields and signature widget if they are missing, then sign.
+* `template` – assumes the AcroForm already contains the row. The command fails if any `rowN.*` or `sig_row_N` field is missing or not `/FT /Sig`.
+* `inject` – creates the row's fields and signature widget (with printable annotation flags) when absent, then signs.
 * `auto` (default) – detect the mode automatically.
 
 `--certify-on-first-inject` promotes the first inject signature to a DocMDP certification when no DocMDP is present yet.
 `--page` specifies the page that holds the row layout (defaults to 1).
+
+Every signing step checks that the output PDF grew in size and re-verifies the document to ensure the new `sig_row_n` is visible to Adobe Reader.
 
 ### `verify`
 
@@ -182,11 +184,28 @@ java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.ja
   --certP12 demo-signer.p12 --password 123456
 ```
 
+## Adobe verification checklist
+
+After each `sign-row`, open the output in **Adobe Acrobat/Reader** and confirm:
+
+1. The **Signatures** panel lists `sig_row_n` entries (e.g. “Signature1 (sig_row_1)”) with a valid status.
+2. The visible appearance sits inside the target row's signature widget with nurse/time text rendered correctly.
+3. The fields `rowN.time`, `rowN.text`, and `rowN.nurse` are read-only, while other rows remain editable.
+4. The file size increased compared to the previous revision, indicating an incremental update.
+
 ## Notes
 
 * All signing operations use `useAppendMode()` to preserve prior revisions.
 * Field rectangles are computed by `LayoutUtil`, so the form scales to any row index the page can fit.
-* `verify` prints the DocMDP status, each signature's validity at its revision, and the FieldMDP(INCLUDE) targets so operators can
-  confirm which fields were locked.
-* The visible signature appearance contains the nurse, time, and reason in Chinese per the requirements. For production deployments
-  you may plug in a CJK font instead of Helvetica if precise glyph coverage is required.
+* `verify` prints the DocMDP status, SubFilter, revision coverage, and FieldMDP(INCLUDE) targets plus their read-only status.
+* The CLI attempts to embed `fonts/NotoSansCJKsc-Regular.otf` for CJK text; if unavailable it falls back to Helvetica.
+
+## Minimal smoke test
+
+After building the CLI and preparing a `nursing_plain.pdf`, run:
+
+```bash
+scripts/basic-inject-test.sh [path/to/nursing_plain.pdf]
+```
+
+The script injects row 1, signs it, invokes `verify`, and fails if `sig_row_1` is not detected in the output.
