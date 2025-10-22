@@ -299,7 +299,7 @@ public final class NursingRecordSigner {
                     + ", expected /Adobe.PPKLite");
         }
         PdfName subFilter = details.getSubFilter();
-        if (!PdfName.adbe_pkcs7_detached.equals(subFilter)) {
+        if (!PdfName.Adbe_pkcs7_detached.equals(subFilter)) {
             String actual = subFilter != null ? "/" + subFilter.getValue() : "null";
             throw new IllegalStateException("Signature subfilter for " + sigName + " was " + actual
                     + ", expected /adbe.pkcs7.detached");
