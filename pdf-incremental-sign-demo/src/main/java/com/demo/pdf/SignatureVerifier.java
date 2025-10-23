@@ -1,5 +1,6 @@
 package com.demo.pdf;
 
+import com.demo.crypto.DemoKeystoreUtil;
 import com.itextpdf.forms.PdfAcroForm;
 import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfReader;
@@ -13,6 +14,7 @@ import java.util.List;
 public class SignatureVerifier {
 
     public static int verify(String path) throws Exception {
+        DemoKeystoreUtil.ensureProvider();
         Path pdfPath = Path.of(path);
         PdfSanityUtil.requireHeader(pdfPath);
         try (PdfDocument pdf = new PdfDocument(new PdfReader(path))) {
@@ -42,12 +44,16 @@ public class SignatureVerifier {
                     }
                 }
 
-                System.out.printf(" - %s | Filter=/%s, SubFilter=/%s, Valid=%s, ByteRange=%s%n",
+                String subject = result.getSigningCertificateSubject() != null
+                        ? result.getSigningCertificateSubject()
+                        : "<missing>";
+                System.out.printf(" - %s | Filter=/%s, SubFilter=/%s, Valid=%s%n",
                         name,
                         result.getFilter().getValue(),
                         result.getSubFilter().getValue(),
-                        result.isPkcs7Valid(),
-                        result.formatByteRange());
+                        result.isPkcs7Valid());
+                System.out.println("     Signing cert subject: " + subject);
+                System.out.println("     ByteRange=" + result.formatByteRange());
             }
             return 0;
         }
