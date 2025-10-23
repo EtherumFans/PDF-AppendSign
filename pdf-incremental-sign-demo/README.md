@@ -66,8 +66,9 @@ Every signing step checks that the output PDF grew in size and re-verifies the d
 verify --pdf <file>
 ```
 
-Prints field-bound signatures with their filter/subfilter, signer identity, and integrity result. Exits with a non-zero status
-when no AcroForm-bound signatures exist or any signature fails validation.
+Re-opens the PDF in append-safe mode, runs the same Adobe sanity checks used during signing, and lists each signature's
+`/Filter`, `/SubFilter`, PKCS#7 validation result, and `/ByteRange` summary. The command fails fast when the header is not at
+byte 0, a signature field misses `/V`, widgets are hidden/missing from `/Annots`, or PKCS#7 verification fails.
 
 ### `certify`
 
@@ -185,17 +186,19 @@ java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.ja
   --certP12 demo-signer.p12 --password 123456
 ```
 
-## Adobe verification checklist
+## Acrobat checklist + incremental signing
 
-Adobe Reader hides signatures when any of the following five issues occurs: **no `/V` binding**, **widget missing from `/Annots`**,
-**wrong `/Filter`**, **header not at byte 0**, or **invalid `/ByteRange`/`/Contents`**. The CLI now guards against all of them:
+Adobe Reader hides signatures when any of the following issues occurs: **no `/V` binding**, **widget missing from `/Annots`**,
+**wrong `/Filter`/`/SubFilter`**, **header not at byte 0**, or **invalid `/ByteRange`/`/Contents`**. The toolkit now enforces all of
+them on every signing revision:
 
 1. **`sign-row` aborts if the signature field is not Adobe-compatible.** It creates (or reuses) a real `/FT /Sig` field, forces the
    widget onto the target page’s `/Annots`, sets printable & visible flags, and signs with `/Filter /Adobe.PPKLite` plus
-   `/SubFilter /adbe.pkcs7.detached`. After writing the revision it re-opens the PDF to confirm the `/V` binding, `ByteRange`,
-   `/Contents`, widget placement, and header bytes. Any failure throws with an actionable message.
+   `/SubFilter /adbe.pkcs7.detached`. After writing the revision it re-opens the PDF to confirm `/V` linkage, `/Filter`,
+   `/SubFilter`, `/ByteRange`, `/Contents` (even-length hex), widget placement, and header bytes before accepting the result.
 
-2. **Run the CLI verifier after every signing revision.**
+2. **`verify` repeats the same checks for every existing signature.** In addition to the PKCS#7 validation it confirms widget
+   flags, page placement, and ByteRange math, then prints a concise summary so you can compare revisions quickly.
 
    ```bash
    java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar \
@@ -222,7 +225,7 @@ Adobe Reader hides signatures when any of the following five issues occurs: **no
 
 * All signing operations use `useAppendMode()` to preserve prior revisions.
 * Field rectangles are computed by `LayoutUtil`, so the form scales to any row index the page can fit.
-* `verify` prints each signature's filter/subfilter, signer CN, sign date, and validation result so you can cross-check Adobe's
+* `verify` prints each signature's filter/subfilter, ByteRange summary, and validation result so you can cross-check Adobe's
   Signatures panel.
 * The CLI attempts to embed `fonts/NotoSansCJKsc-Regular.otf` for CJK text; if unavailable it falls back to Helvetica.
 
