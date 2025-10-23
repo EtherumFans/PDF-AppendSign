@@ -111,6 +111,7 @@ public final class PostSignValidator {
             if (w.getPage() == null) {
                 throw new IllegalStateException("Widget not attached to any page.");
             }
+            PdfWidgetUtil.ensureWidgetInAnnots(w.getPage(), w, fname);
             PdfNumber flagNumber = w.getPdfObject().getAsNumber(PdfName.F);
             int flags = flagNumber != null ? flagNumber.intValue() : w.getFlags();
             if ((flags & PdfAnnotation.PRINT) == 0) {

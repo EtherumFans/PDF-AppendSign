@@ -186,28 +186,29 @@ java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.ja
   --certP12 demo-signer.p12 --password 123456
 ```
 
-## Adobe 检测清单（Acrobat checklist + incremental signing）
+## Acrobat 兼容性检查单（Acrobat compatibility checklist）
 
-Adobe Reader hides signatures when any of the following issues occurs: **no `/V` binding**, **widget missing from `/Annots`**,
-**wrong `/Filter`/`/SubFilter`**, **header not at byte 0**, or **invalid `/ByteRange`/`/Contents`**. The toolkit now enforces all of
-them on every signing revision:
+Adobe Reader hides signatures when any of the following issues occurs: **no `/V` binding**, **widget missing from `/Annots`**, **wrong `/Filter`/`/SubFilter`**, **header not at byte 0**, or **invalid `/ByteRange`/`/Contents`**. Check every revision against this list:
 
-1. **`sign-row` aborts if the signature field is not Adobe-compatible.** It creates (or reuses) a real `/FT /Sig` field, forces the
-   widget onto the target page’s `/Annots`, sets printable & visible flags, and signs with `/Filter /Adobe.PPKLite` plus
-   `/SubFilter /adbe.pkcs7.detached`. After writing the revision it immediately calls `PostSignValidator.validate(...)` to re-open
-   the fresh file, confirm the header bytes, `/V` binding, `/Filter`, `/SubFilter`, `/ByteRange`, `/Contents` length, widget placement,
-   and PKCS#7 integrity before accepting the result.
+1. The signature field exists with `/FT /Sig`, and its `/V` entry points to the signature dictionary.
+2. The signature dictionary uses `/Filter /Adobe.PPKLite` with `/SubFilter /adbe.pkcs7.detached` (or `/ETSI.CAdES.detached`).
+3. `/ByteRange` contains four non-negative integers starting at 0 and `/Contents` is an even-length hex string.
+4. The signature widget annotation lives in the page’s `/Annots` array, is visible, and has the `PRINT` flag.
+5. Each signing run writes an incremental update (append mode) so earlier signatures remain valid.
+6. The AcroForm `SigFlags` set bits 1 and 2 (`SIGNATURE_EXIST | APPEND_ONLY`).
 
-2. **`verify` repeats the same checks for every existing signature.** In addition to the PKCS#7 validation it confirms widget
-   flags, page placement, and ByteRange math, then prints a concise summary so you can compare revisions quickly.
+The toolkit enforces these requirements on every signing revision:
+
+1. **`sign-row` aborts if the signature field is not Adobe-compatible.** It creates (or reuses) a real `/FT /Sig` field, forces the widget onto the target page’s `/Annots`, sets printable & visible flags, and signs with `/Filter /Adobe.PPKLite` plus `/SubFilter /adbe.pkcs7.detached`. After writing the revision it immediately calls `PostSignValidator.validate(...)` to re-open the fresh file, confirm the header bytes, `/V` binding, `/Filter`, `/SubFilter`, `/ByteRange`, `/Contents` length, widget placement, and PKCS#7 integrity before accepting the result.
+
+2. **`verify` repeats the same checks for every existing signature.** In addition to the PKCS#7 validation it confirms widget flags, page placement, and ByteRange math, then prints a concise summary so you can compare revisions quickly.
 
    ```bash
    java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar \
      verify --pdf nursing_15.pdf
    ```
 
-   Expect `sig_row_n` entries with `Filter=/Adobe.PPKLite`, `SubFilter=/adbe.pkcs7.detached` (or `/ETSI.CAdES.detached`), and
-   `Valid=true`. An empty list means Adobe will also hide the signature.
+   Expect `sig_row_n` entries with `Filter=/Adobe.PPKLite`, `SubFilter=/adbe.pkcs7.detached` (or `/ETSI.CAdES.detached`), and `Valid=true`. An empty list means Adobe will also hide the signature.
 
 3. **Use the structural debugger when Acrobat’s Signatures panel is empty.**
 
@@ -216,12 +217,9 @@ them on every signing revision:
      debug-structure --pdf nursing_15.pdf
    ```
 
-   The report prints the file header plus each `sig_row_*` field: widget page/rect/flags, `/V` dictionary, `/Filter`, `/SubFilter`,
-   `/ByteRange`, and `/Contents` length. Any anomaly comes with a fix hint and the command exits non-zero so CI can halt.
+   The report prints the file header plus each `sig_row_*` field: widget page/rect/flags, `/V` dictionary, `/Filter`, `/SubFilter`, `/ByteRange`, and `/Contents` length. Any anomaly comes with a fix hint and the command exits non-zero so CI can halt.
 
-4. **Finally, confirm visually in Adobe Acrobat/Reader.** The Signatures panel must list the new `sig_row_n`. File size should
-   increase on every append-only revision, and Acrobat’s “View Signed Version” keeps earlier signatures valid. The demo scripts
-   show the full `10:00 → 13:00 → 15:00` chain so you can see each revision stacked in Acrobat’s history.
+4. **Finally, confirm visually in Adobe Acrobat/Reader.** The Signatures panel must list the new `sig_row_n`. File size should increase on every append-only revision, and Acrobat’s “View Signed Version” keeps earlier signatures valid. The demo scripts show the full `10:00 → 13:00 → 15:00` chain so you can see each revision stacked in Acrobat’s history.
 
 ## Notes
 
