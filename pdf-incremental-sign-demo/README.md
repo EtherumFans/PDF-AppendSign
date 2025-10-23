@@ -186,7 +186,7 @@ java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.ja
   --certP12 demo-signer.p12 --password 123456
 ```
 
-## Acrobat checklist + incremental signing
+## Adobe 检测清单（Acrobat checklist + incremental signing）
 
 Adobe Reader hides signatures when any of the following issues occurs: **no `/V` binding**, **widget missing from `/Annots`**,
 **wrong `/Filter`/`/SubFilter`**, **header not at byte 0**, or **invalid `/ByteRange`/`/Contents`**. The toolkit now enforces all of
