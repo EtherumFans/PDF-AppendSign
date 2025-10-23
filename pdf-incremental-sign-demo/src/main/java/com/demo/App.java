@@ -3,6 +3,7 @@ package com.demo;
 import com.demo.crypto.DemoKeystoreUtil;
 import com.demo.pdf.NursingRecordSigner;
 import com.demo.pdf.NursingRecordTemplate;
+import com.demo.pdf.PdfStructureDebugger;
 import com.demo.pdf.SignatureVerifier;
 import picocli.CommandLine;
 
@@ -22,6 +23,7 @@ public class App {
                     CreateTemplate.class,
                     SignRow.class,
                     VerifyPdf.class,
+                    DebugStructure.class,
                     Certify.class,
                     GenDemoP12.class
             })
@@ -138,6 +140,18 @@ public class App {
                 return rc;
             }
             return 0;
+        }
+    }
+
+    @CommandLine.Command(name = "debug-structure", description = "Dump signature field structure for Adobe troubleshooting")
+    static class DebugStructure implements Callable<Integer> {
+        @CommandLine.Option(names = "--pdf", required = true, description = "PDF to inspect")
+        private Path pdf;
+
+        @Override
+        public Integer call() throws Exception {
+            int rc = PdfStructureDebugger.inspect(pdf.toAbsolutePath());
+            return rc;
         }
     }
 
