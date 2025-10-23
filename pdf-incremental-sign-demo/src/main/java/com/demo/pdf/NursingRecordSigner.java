@@ -26,7 +26,7 @@ import com.itextpdf.signatures.PdfSigner;
 import com.itextpdf.signatures.PrivateKeySignature;
 import com.itextpdf.signatures.SignatureUtil;
 import com.itextpdf.signatures.TSAClientBouncyCastle;
-import com.itextpdf.signatures.fields.PdfSigFieldLock;
+import com.itextpdf.forms.PdfSigFieldLock;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 
 import java.io.FileOutputStream;
