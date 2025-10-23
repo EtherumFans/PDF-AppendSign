@@ -194,8 +194,9 @@ them on every signing revision:
 
 1. **`sign-row` aborts if the signature field is not Adobe-compatible.** It creates (or reuses) a real `/FT /Sig` field, forces the
    widget onto the target page’s `/Annots`, sets printable & visible flags, and signs with `/Filter /Adobe.PPKLite` plus
-   `/SubFilter /adbe.pkcs7.detached`. After writing the revision it re-opens the PDF to confirm `/V` linkage, `/Filter`,
-   `/SubFilter`, `/ByteRange`, `/Contents` (even-length hex), widget placement, and header bytes before accepting the result.
+   `/SubFilter /adbe.pkcs7.detached`. After writing the revision it immediately calls `PostSignValidator.validate(...)` to re-open
+   the fresh file, confirm the header bytes, `/V` binding, `/Filter`, `/SubFilter`, `/ByteRange`, `/Contents` length, widget placement,
+   and PKCS#7 integrity before accepting the result.
 
 2. **`verify` repeats the same checks for every existing signature.** In addition to the PKCS#7 validation it confirms widget
    flags, page placement, and ByteRange math, then prints a concise summary so you can compare revisions quickly.
@@ -219,7 +220,8 @@ them on every signing revision:
    `/ByteRange`, and `/Contents` length. Any anomaly comes with a fix hint and the command exits non-zero so CI can halt.
 
 4. **Finally, confirm visually in Adobe Acrobat/Reader.** The Signatures panel must list the new `sig_row_n`. File size should
-   increase on every append-only revision, and Acrobat’s “View Signed Version” keeps earlier signatures valid.
+   increase on every append-only revision, and Acrobat’s “View Signed Version” keeps earlier signatures valid. The demo scripts
+   show the full `10:00 → 13:00 → 15:00` chain so you can see each revision stacked in Acrobat’s history.
 
 ## Notes
 
