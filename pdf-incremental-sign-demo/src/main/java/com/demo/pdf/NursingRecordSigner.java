@@ -254,10 +254,7 @@ public final class NursingRecordSigner {
             nurseField.setReadOnly(true);
 
             PdfSigFieldLock lock = new PdfSigFieldLock()
-                    .setAction(PdfSigFieldLock.LockAction.INCLUDE)
-                    .addFieldLock(timeName)
-                    .addFieldLock(textName)
-                    .addFieldLock(nurseName);
+                    .setFieldLock(PdfSigFieldLock.LockAction.INCLUDE, timeName, textName, nurseName);
             signatureContext.getField().put(PdfName.Lock, lock.getPdfObject());
 
             if (effectiveMode == SigningMode.INJECT && params.isCertifyOnFirstInject() && !DocMDPUtil.hasDocMDP(document)) {
