@@ -187,17 +187,33 @@ java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.ja
 
 ## Adobe verification checklist
 
-After each `sign-row`, run the CLI verifier to ensure Adobe-friendly metadata is present:
+1. **Run the CLI verifier after every `sign-row`.**
 
-```
-mvn -q -DskipTests exec:java \
-  -Dexec.mainClass=com.demo.pdf.SignatureVerifier \
-  -Dexec.args="care-record_2.pdf"
-```
+   ```bash
+   java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar \
+     verify --pdf nursing_15.pdf
+   ```
 
-Expect the console output to show at least one entry in “AcroForm signatures”, along with
-`Filter=/Adobe.PPKLite` and `SubFilter=/adbe.pkcs7.detached` for each signed field. If the list is empty, the signature is not
-bound to the field’s `/V` entry and Adobe Acrobat will not display it.
+   The report must list `sig_row_n` with `Filter=/Adobe.PPKLite`, `SubFilter=/adbe.pkcs7.detached`, and `Valid=true`. If the
+   list is empty or the filter/subfilter do not match, Adobe Reader will hide the signature.
+
+2. **Open the PDF in Adobe Acrobat/Reader and check the Signatures panel.** Each newly signed row should appear with the same
+   field name reported by the verifier.
+
+3. **If Acrobat’s panel is empty, run the structural debugger for hints.**
+
+   ```bash
+   java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar \
+     debug-structure --pdf nursing_15.pdf
+   ```
+
+   Ensure that:
+
+   * The header at byte 0 reads `%PDF-` (no UTF-8 BOM or stray bytes).
+   * The field `sig_row_n` exists in the AcroForm `/Fields` array and its `/V` dictionary reports `Filter=/Adobe.PPKLite`.
+   * The signature dictionary shows `/ByteRange` with the first value `0` and `/Contents` as an even-length hex string.
+
+   Fix any failing condition before re-signing; otherwise Adobe will refuse to list the signature.
 
 Additional manual checks in Acrobat Reader:
 
