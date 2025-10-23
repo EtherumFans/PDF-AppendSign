@@ -384,7 +384,7 @@ public final class NursingRecordSigner {
             PdfWidgetAnnotation widget = createdField.getWidgets().get(0);
             widget.setPage(page);
             widget.setFlags(PdfAnnotation.PRINT);
-            widget.setVisibility(PdfAnnotation.VISIBLE);
+            widget.setVisibility(PdfAnnotation.Visibility.VISIBLE);
             clearHiddenFlags(widget);
             PdfNumber flagNumber = new PdfNumber(widget.getFlags());
             widget.getPdfObject().put(PdfName.F, flagNumber);
@@ -443,7 +443,7 @@ public final class NursingRecordSigner {
         flags &= ~PdfAnnotation.TOGGLE_NO_VIEW;
         flags &= ~PdfAnnotation.NO_VIEW;
         widget.setFlags(flags | PdfAnnotation.PRINT);
-        widget.setVisibility(PdfAnnotation.VISIBLE);
+        widget.setVisibility(PdfAnnotation.Visibility.VISIBLE);
     }
 
     private static PdfFont resolveAppearanceFont() {
