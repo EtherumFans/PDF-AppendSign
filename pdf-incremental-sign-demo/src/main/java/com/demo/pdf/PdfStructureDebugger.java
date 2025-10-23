@@ -7,6 +7,8 @@ import com.itextpdf.kernel.pdf.PdfArray;
 import com.itextpdf.kernel.pdf.PdfDictionary;
 import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfName;
+import com.itextpdf.kernel.pdf.PdfNumber;
+import com.itextpdf.kernel.pdf.PdfObject;
 import com.itextpdf.kernel.pdf.PdfReader;
 import com.itextpdf.kernel.pdf.PdfString;
 import com.itextpdf.kernel.pdf.annot.PdfAnnotation;
@@ -106,7 +108,8 @@ public final class PdfStructureDebugger {
             }
             for (PdfWidgetAnnotation widget : widgets) {
                 Rectangle rect = widget.getRectangle().toRectangle();
-                int flags = widget.getFlags();
+                PdfNumber flagNumber = widget.getPdfObject().getAsNumber(PdfName.F);
+                int flags = flagNumber != null ? flagNumber.intValue() : widget.getFlags();
                 int pageNumber = widget.getPage() != null ? pdf.getPageNumber(widget.getPage()) : -1;
                 System.out.printf(Locale.ROOT, "  Widget -> page=%d rect=%s flags=0x%X%n", pageNumber, rect, flags);
                 if (pageNumber < 1) {
@@ -124,10 +127,20 @@ public final class PdfStructureDebugger {
                     ok = false;
                     System.out.println("  !! Widget is not printable (missing PRINT flag)");
                 }
-                if ((flags & (PdfAnnotation.HIDDEN | PdfAnnotation.INVISIBLE | PdfAnnotation.TOGGLE_NO_VIEW)) != 0) {
+                if ((flags & (PdfAnnotation.HIDDEN | PdfAnnotation.INVISIBLE | PdfAnnotation.TOGGLE_NO_VIEW | PdfAnnotation.NOVIEW)) != 0) {
                     ok = false;
                     System.out.println("  !! Widget is hidden or not viewable");
                     System.out.println("  Hint: Clear HIDDEN/INVISIBLE/TOGGLE_NO_VIEW flags before signing.");
+                }
+                PdfArray annots = widget.getPage() != null ? widget.getPage().getPdfObject().getAsArray(PdfName.Annots) : null;
+                if (annots == null) {
+                    ok = false;
+                    System.out.println("  !! Widget page is missing /Annots array");
+                    System.out.println("  Hint: Add the widget dictionary to page.addAnnotation(...).");
+                } else if (!annotsContains(annots, widget.getPdfObject())) {
+                    ok = false;
+                    System.out.println("  !! Widget dictionary not listed in page /Annots array");
+                    System.out.println("  Hint: Call page.addAnnotation(widget) after creating the signature field.");
                 }
             }
         }
@@ -170,6 +183,18 @@ public final class PdfStructureDebugger {
         } else if (br.getAsNumber(0).longValue() != 0L) {
             ok = false;
             System.out.println("  !! /ByteRange[0] must be 0");
+        } else {
+            long br1 = br.getAsNumber(1).longValue();
+            long br2 = br.getAsNumber(2).longValue();
+            long br3 = br.getAsNumber(3).longValue();
+            if (br1 < 0 || br2 < 0 || br3 < 0) {
+                ok = false;
+                System.out.println("  !! /ByteRange contains negative values");
+            }
+            if (br2 < br1) {
+                ok = false;
+                System.out.println("  !! /ByteRange segments overlap (br[2] < br[1])");
+            }
         }
 
         PdfString contents = sigDict.getAsString(PdfName.Contents);
@@ -181,6 +206,9 @@ public final class PdfStructureDebugger {
         } else if (!contents.isHexWriting()) {
             ok = false;
             System.out.println("  !! /Contents must be hex-encoded");
+        } else if ((contents.getValueBytes().length & 1) != 0) {
+            ok = false;
+            System.out.println("  !! /Contents hex string must have an even length");
         }
 
         return ok;
@@ -199,6 +227,19 @@ public final class PdfStructureDebugger {
                 && Math.abs(a.getY() - b.getY()) <= tolerance
                 && Math.abs(a.getWidth() - b.getWidth()) <= tolerance
                 && Math.abs(a.getHeight() - b.getHeight()) <= tolerance;
+    }
+
+    private static boolean annotsContains(PdfArray annots, PdfDictionary widgetDict) {
+        for (int i = 0; i < annots.size(); i++) {
+            PdfObject obj = annots.get(i);
+            if (obj != null && obj.getIndirectReference() == widgetDict.getIndirectReference()) {
+                return true;
+            }
+            if (obj != null && obj.equals(widgetDict)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static int parseRowIndex(String name) {

@@ -3,10 +3,10 @@ package com.demo.pdf;
 import com.demo.crypto.DemoKeystoreUtil;
 import com.itextpdf.forms.PdfAcroForm;
 import com.itextpdf.forms.fields.PdfFormField;
-import com.itextpdf.forms.fields.PdfSignatureFormField;
 import com.itextpdf.forms.fields.PdfTextFormField;
 import com.itextpdf.io.font.PdfEncodings;
 import com.itextpdf.io.font.constants.StandardFonts;
+import com.itextpdf.io.source.RandomAccessFileOrArray;
 import com.itextpdf.kernel.font.PdfFont;
 import com.itextpdf.kernel.font.PdfFontFactory;
 import com.itextpdf.kernel.geom.Rectangle;
@@ -14,6 +14,9 @@ import com.itextpdf.kernel.pdf.PdfArray;
 import com.itextpdf.kernel.pdf.PdfDictionary;
 import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfName;
+import com.itextpdf.kernel.pdf.PdfNumber;
+import com.itextpdf.kernel.pdf.PdfObject;
+import com.itextpdf.kernel.pdf.PdfPage;
 import com.itextpdf.kernel.pdf.PdfReader;
 import com.itextpdf.kernel.pdf.StampingProperties;
 import com.itextpdf.kernel.pdf.PdfString;
@@ -239,7 +242,7 @@ public final class NursingRecordSigner {
                     LayoutUtil.FieldSlot.TEXT, true, effectiveMode);
             PdfTextFormField nurseField = resolveTextField(document, acro, params.getPage(), pageSize, params.getRow(), nurseName,
                     LayoutUtil.FieldSlot.NURSE, false, effectiveMode);
-            SignatureFieldContext signatureContext = ensureSignatureField(document, acro, params.getPage(), pageSize,
+            SignatureFieldContext signatureContext = ensureSignatureField(document, acro, params.getPage(),
                     params.getRow(), sigName, effectiveMode);
 
             if (baselineSet.contains(sigName)) {
@@ -262,9 +265,8 @@ public final class NursingRecordSigner {
             signer.setFieldName(sigName);
             PdfSignatureAppearance appearance = signer.getSignatureAppearance();
             appearance.setReuseAppearance(false);
-            Rectangle sigRect = LayoutUtil.sigRectForRow(document, signatureContext.getPageNumber(), params.getRow());
             appearance.setPageNumber(signatureContext.getPageNumber());
-            appearance.setPageRect(sigRect);
+            appearance.setPageRect(signatureContext.getRect());
             appearance.setReason("Nursing note " + params.getTimeValue());
             appearance.setLocation("Ward A");
             String layer2 = String.format("护士: %s\n时间: %s\n事由: Nursing note %s",
@@ -287,7 +289,6 @@ public final class NursingRecordSigner {
             throw new IllegalStateException("Destination PDF did not grow after signing; aborting to avoid overwriting");
         }
 
-        PdfSanityUtil.requireHeader(destPath);
         validateSignedOutput(destPath, sigName, initialSignatureCount);
         System.out.println("[sign-row] Signature applied in append mode");
     }
@@ -361,22 +362,23 @@ public final class NursingRecordSigner {
     }
 
     private static SignatureFieldContext ensureSignatureField(PdfDocument document, PdfAcroForm acro, int pageNumber,
-                                                              Rectangle pageSize, int row, String name, SigningMode mode) {
+                                                              int row, String name, SigningMode mode) {
         PdfFormField field = acro.getField(name);
+        Rectangle rect = LayoutUtil.sigRectForRow(document, pageNumber, row);
+        PdfPage page = document.getPage(pageNumber);
         if (field == null) {
             if (mode != SigningMode.INJECT) {
                 throw new IllegalStateException("Signature field " + name + " not found");
             }
-            Rectangle rect = LayoutUtil.sigRectForRow(document, pageNumber, row);
-            PdfSignatureFormField createdField = PdfFormField.createSignature(document, rect);
+            PdfFormField createdField = PdfFormField.createSignature(document, rect);
             createdField.setFieldName(name);
-            acro.addField(createdField, document.getPage(pageNumber));
             PdfWidgetAnnotation widget = createdField.getWidgets().get(0);
-            int flags = widget.getFlags() | PdfAnnotation.PRINT;
-            flags &= ~PdfAnnotation.HIDDEN;
-            flags &= ~PdfAnnotation.INVISIBLE;
-            flags &= ~PdfAnnotation.TOGGLE_NO_VIEW;
+            widget.setPage(page);
+            int flags = PdfAnnotation.PRINT;
             widget.setFlags(flags);
+            clearHiddenFlags(widget);
+            acro.addField(createdField);
+            page.addAnnotation(widget);
             return new SignatureFieldContext(createdField, widget, rect, pageNumber);
         }
         PdfName formType = field.getFormType();
@@ -416,10 +418,49 @@ public final class NursingRecordSigner {
         if ((flags & PdfAnnotation.PRINT) == 0) {
             throw new IllegalStateException("Signature widget " + name + " is not printable (missing PRINT flag)");
         }
-        if ((flags & (PdfAnnotation.HIDDEN | PdfAnnotation.INVISIBLE | PdfAnnotation.TOGGLE_NO_VIEW)) != 0) {
+        if ((flags & (PdfAnnotation.HIDDEN | PdfAnnotation.INVISIBLE | PdfAnnotation.TOGGLE_NO_VIEW | PdfAnnotation.NOVIEW)) != 0) {
             throw new IllegalStateException("Signature widget " + name + " is hidden or not viewable");
         }
+        ensureWidgetInAnnots(targetWidget.getPage(), targetWidget);
         return new SignatureFieldContext(field, targetWidget, widgetRect, pageNumber);
+    }
+
+    private static void ensureWidgetInAnnots(PdfPage page, PdfWidgetAnnotation widget) {
+        PdfPage actualPage = page != null ? page : widget.getPage();
+        if (actualPage == null) {
+            throw new IllegalStateException("Signature widget is not associated with any page");
+        }
+        PdfArray annots = actualPage.getPdfObject().getAsArray(PdfName.Annots);
+        if (annots == null) {
+            PdfDocument doc = actualPage.getDocument();
+            int pageNumber = doc != null ? doc.getPageNumber(actualPage) : -1;
+            throw new IllegalStateException("Page " + pageNumber + " has no /Annots array");
+        }
+        PdfDictionary widgetObject = widget.getPdfObject();
+        boolean found = false;
+        for (int i = 0; i < annots.size(); i++) {
+            PdfObject obj = annots.get(i);
+            if (obj != null && obj.getIndirectReference() == widgetObject.getIndirectReference()) {
+                found = true;
+                break;
+            }
+            if (obj != null && obj.equals(widgetObject)) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            throw new IllegalStateException("Signature widget is not listed in page /Annots array");
+        }
+    }
+
+    private static void clearHiddenFlags(PdfWidgetAnnotation widget) {
+        int flags = widget.getFlags();
+        flags &= ~PdfAnnotation.HIDDEN;
+        flags &= ~PdfAnnotation.INVISIBLE;
+        flags &= ~PdfAnnotation.TOGGLE_NO_VIEW;
+        flags &= ~PdfAnnotation.NOVIEW;
+        widget.setFlags(flags | PdfAnnotation.PRINT);
     }
 
     private static PdfFont resolveAppearanceFont() {
@@ -480,6 +521,7 @@ public final class NursingRecordSigner {
     }
 
     private static void validateSignedOutput(Path destPath, String sigName, int initialSignatureCount) throws Exception {
+        requirePdfHeader(destPath);
         try (PdfDocument pdf = new PdfDocument(new PdfReader(destPath.toString()))) {
             PdfAcroForm acro = PdfAcroForm.getAcroForm(pdf, false);
             if (acro == null) {
@@ -501,6 +543,24 @@ public final class NursingRecordSigner {
             if (field == null) {
                 throw new IllegalStateException("AcroForm is missing signature field " + sigName + " after signing");
             }
+            List<PdfWidgetAnnotation> widgets = field.getWidgets();
+            if (widgets == null || widgets.isEmpty()) {
+                throw new IllegalStateException("Signature field has no widget annotations: " + sigName);
+            }
+            PdfWidgetAnnotation widget = widgets.get(0);
+            PdfPage widgetPage = widget.getPage();
+            if (widgetPage == null) {
+                throw new IllegalStateException("Signature widget has no page reference: " + sigName);
+            }
+            ensureWidgetInAnnots(widgetPage, widget);
+            PdfNumber flagNumber = widget.getPdfObject().getAsNumber(PdfName.F);
+            int flags = flagNumber != null ? flagNumber.intValue() : 0;
+            if ((flags & PdfAnnotation.PRINT) == 0) {
+                throw new IllegalStateException("Signature widget is not printable (missing PRINT flag)");
+            }
+            if ((flags & (PdfAnnotation.HIDDEN | PdfAnnotation.INVISIBLE | PdfAnnotation.TOGGLE_NO_VIEW | PdfAnnotation.NOVIEW)) != 0) {
+                throw new IllegalStateException("Signature widget is hidden or not viewable");
+            }
             PdfDictionary fieldDict = field.getPdfObject();
             PdfDictionary sigDict = fieldDict != null ? fieldDict.getAsDictionary(PdfName.V) : null;
             if (sigDict == null) {
@@ -518,6 +578,7 @@ public final class NursingRecordSigner {
             }
             PdfName subFilter = sigDict.getAsName(PdfName.SubFilter);
             if (subFilter == null || !(PdfName.Adbe_pkcs7_detached.equals(subFilter)
+                    || PdfName.adbe_pkcs7_detached.equals(subFilter)
                     || PdfName.ETSI_CAdES_detached.equals(subFilter))) {
                 String actual = subFilter != null ? "/" + subFilter.getValue() : "null";
                 throw new IllegalStateException("Signature SubFilter not CMS/CAdES: " + actual);
@@ -552,6 +613,17 @@ public final class NursingRecordSigner {
             }
             if ((contents.getValueBytes().length & 1) != 0) {
                 throw new IllegalStateException("/Contents must be a hex string with even length");
+            }
+        }
+    }
+
+    private static void requirePdfHeader(Path destPath) throws Exception {
+        try (RandomAccessFileOrArray raf = new RandomAccessFileOrArray(destPath.toString())) {
+            byte[] head = new byte[8];
+            raf.readFully(head, 0, 8);
+            String headStr = new String(head, java.nio.charset.StandardCharsets.US_ASCII);
+            if (!headStr.startsWith("%PDF-")) {
+                throw new IllegalStateException("PDF header is not at byte 0 (BOM or stray bytes). Adobe may ignore signatures.");
             }
         }
     }

@@ -187,39 +187,36 @@ java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.ja
 
 ## Adobe verification checklist
 
-1. **Run the CLI verifier after every `sign-row`.**
+Adobe Reader hides signatures when any of the following five issues occurs: **no `/V` binding**, **widget missing from `/Annots`**,
+**wrong `/Filter`**, **header not at byte 0**, or **invalid `/ByteRange`/`/Contents`**. The CLI now guards against all of them:
+
+1. **`sign-row` aborts if the signature field is not Adobe-compatible.** It creates (or reuses) a real `/FT /Sig` field, forces the
+   widget onto the target page’s `/Annots`, sets printable & visible flags, and signs with `/Filter /Adobe.PPKLite` plus
+   `/SubFilter /adbe.pkcs7.detached`. After writing the revision it re-opens the PDF to confirm the `/V` binding, `ByteRange`,
+   `/Contents`, widget placement, and header bytes. Any failure throws with an actionable message.
+
+2. **Run the CLI verifier after every signing revision.**
 
    ```bash
    java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar \
      verify --pdf nursing_15.pdf
    ```
 
-   The report must list `sig_row_n` with `Filter=/Adobe.PPKLite`, `SubFilter=/adbe.pkcs7.detached`, and `Valid=true`. If the
-   list is empty or the filter/subfilter do not match, Adobe Reader will hide the signature.
+   Expect `sig_row_n` entries with `Filter=/Adobe.PPKLite`, `SubFilter=/adbe.pkcs7.detached` (or `/ETSI.CAdES.detached`), and
+   `Valid=true`. An empty list means Adobe will also hide the signature.
 
-2. **Open the PDF in Adobe Acrobat/Reader and check the Signatures panel.** Each newly signed row should appear with the same
-   field name reported by the verifier.
-
-3. **If Acrobat’s panel is empty, run the structural debugger for hints.**
+3. **Use the structural debugger when Acrobat’s Signatures panel is empty.**
 
    ```bash
    java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar \
      debug-structure --pdf nursing_15.pdf
    ```
 
-   Ensure that:
+   The report prints the file header plus each `sig_row_*` field: widget page/rect/flags, `/V` dictionary, `/Filter`, `/SubFilter`,
+   `/ByteRange`, and `/Contents` length. Any anomaly comes with a fix hint and the command exits non-zero so CI can halt.
 
-   * The header at byte 0 reads `%PDF-` (no UTF-8 BOM or stray bytes).
-   * The field `sig_row_n` exists in the AcroForm `/Fields` array and its `/V` dictionary reports `Filter=/Adobe.PPKLite`.
-   * The signature dictionary shows `/ByteRange` with the first value `0` and `/Contents` as an even-length hex string.
-
-   Fix any failing condition before re-signing; otherwise Adobe will refuse to list the signature.
-
-Additional manual checks in Acrobat Reader:
-
-* Open the PDF and inspect the **Signatures** panel – `sig_row_1`, `sig_row_2`, … should appear for every signed row.
-* Each signing produces a slightly larger file size because append mode writes a new incremental revision instead of overwriting earlier bytes.
-* Earlier signatures remain valid when you inspect previous revisions via Acrobat’s “View Signed Version”.
+4. **Finally, confirm visually in Adobe Acrobat/Reader.** The Signatures panel must list the new `sig_row_n`. File size should
+   increase on every append-only revision, and Acrobat’s “View Signed Version” keeps earlier signatures valid.
 
 ## Notes
 
