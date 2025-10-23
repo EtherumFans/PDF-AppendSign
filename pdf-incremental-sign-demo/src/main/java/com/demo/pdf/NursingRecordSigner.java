@@ -218,7 +218,7 @@ public final class NursingRecordSigner {
             PdfDocument document = signer.getDocument();
             PdfAcroForm acro = PdfAcroForm.getAcroForm(document, true);
             FormUtil.ensureNeedAppearances(acro);
-            acro.setSignatureFlags(PdfAcroForm.SIGNATURE_EXIST);
+            acro.setSignatureFlags(PdfAcroForm.SIGNATURE_EXIST | PdfAcroForm.APPEND_ONLY);
 
             if (params.getPage() < 1 || params.getPage() > document.getNumberOfPages()) {
                 throw new IllegalArgumentException("Page " + params.getPage() + " is out of bounds");
