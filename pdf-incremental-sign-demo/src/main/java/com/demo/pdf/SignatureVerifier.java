@@ -1,60 +1,55 @@
 package com.demo.pdf;
 
 import com.itextpdf.forms.PdfAcroForm;
-import com.itextpdf.forms.fields.PdfFormField;
-import com.itextpdf.kernel.pdf.PdfDictionary;
 import com.itextpdf.kernel.pdf.PdfDocument;
-import com.itextpdf.kernel.pdf.PdfName;
 import com.itextpdf.kernel.pdf.PdfReader;
-import com.itextpdf.signatures.PdfPKCS7;
 import com.itextpdf.signatures.SignatureUtil;
 
-import java.util.Collections;
+import com.itextpdf.kernel.geom.Rectangle;
+
+import java.nio.file.Path;
 import java.util.List;
 
 public class SignatureVerifier {
 
     public static int verify(String path) throws Exception {
+        Path pdfPath = Path.of(path);
+        PdfSanityUtil.requireHeader(pdfPath);
         try (PdfDocument pdf = new PdfDocument(new PdfReader(path))) {
             PdfAcroForm acro = PdfAcroForm.getAcroForm(pdf, false);
+            if (acro == null) {
+                throw new IllegalStateException("No AcroForm present in PDF: " + path);
+            }
             SignatureUtil su = new SignatureUtil(pdf);
 
-            List<String> names = (acro != null) ? su.getSignatureNames() : Collections.emptyList();
+            List<String> names = su.getSignatureNames();
             System.out.println("PDF: " + path);
             System.out.println("AcroForm signatures: " + names.size() + " -> " + names);
 
             if (names.isEmpty()) {
-                System.out.println("No field-bound signatures found (Adobe panel will be empty).");
-                return 2;
+                throw new IllegalStateException("No field-bound signatures found (Adobe panel will be empty).");
             }
 
-            int invalid = 0;
             for (String name : names) {
-                // 1) Read PKCS7 via SignatureUtil (works across iText 7.x)
-                PdfPKCS7 pk = su.readSignatureData(name);
-                boolean ok = pk.verifySignatureIntegrityAndAuthenticity();
+                SignatureDiagnostics.SignatureCheckResult result =
+                        SignatureDiagnostics.inspectSignature(pdfPath, pdf, su, acro, name);
 
-                // 2) Get /Filter and /SubFilter from the field's /V dictionary
-                PdfFormField field   = acro.getField(name);
-                PdfDictionary fDict  = (field != null) ? field.getPdfObject() : null;
-                PdfDictionary sigDict= (fDict != null) ? fDict.getAsDictionary(PdfName.V) : null;
+                int rowIndex = SignatureDiagnostics.extractRowIndex(name);
+                if (rowIndex > 0) {
+                    Rectangle expectedRect = LayoutUtil.sigRectForRow(pdf, result.getPageNumber(), rowIndex);
+                    if (!SignatureDiagnostics.rectanglesSimilar(result.getWidgetRect(), expectedRect)) {
+                        throw new IllegalStateException("Signature widget rectangle mismatch for " + name);
+                    }
+                }
 
-                PdfName filter    = (sigDict != null) ? sigDict.getAsName(PdfName.Filter)    : null;
-                PdfName subFilter = (sigDict != null) ? sigDict.getAsName(PdfName.SubFilter) : null;
-
-                System.out.printf(" - %s | Filter=%s, SubFilter=%s, Valid=%s, SignDate=%s, SubjectCN=%s%n",
+                System.out.printf(" - %s | Filter=/%s, SubFilter=/%s, Valid=%s, ByteRange=%s%n",
                         name,
-                        (filter != null ? filter.getValue() : "null"),
-                        (subFilter != null ? subFilter.getValue() : "null"),
-                        ok,
-                        pk.getSignDate(),
-                        pk.getSigningCertificate() != null
-                                ? pk.getSigningCertificate().getSubjectX500Principal().getName()
-                                : "N/A"
-                );
-                if (!ok) invalid++;
+                        result.getFilter().getValue(),
+                        result.getSubFilter().getValue(),
+                        result.isPkcs7Valid(),
+                        result.formatByteRange());
             }
-            return invalid == 0 ? 0 : 3;
+            return 0;
         }
     }
 
