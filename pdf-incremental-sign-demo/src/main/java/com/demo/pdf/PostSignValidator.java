@@ -74,7 +74,7 @@ public final class PostSignValidator {
             }
 
             PdfName sub = sig.getAsName(PdfName.SubFilter);
-            if (!(PdfName.Adbe_pkcs7_detached.equals(sub) || PdfName.ETSI_CAdES_detached.equals(sub))) {
+            if (!(PdfName.Adbe_pkcs7_detached.equals(sub) || PdfName.ETSI_CAdES_DETACHED.equals(sub))) {
                 throw new IllegalStateException("SubFilter not CMS/CAdES: " + sub);
             }
 
