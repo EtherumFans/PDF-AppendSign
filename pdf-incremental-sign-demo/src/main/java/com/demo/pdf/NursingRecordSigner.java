@@ -384,6 +384,7 @@ public final class NursingRecordSigner {
             PdfWidgetAnnotation widget = createdField.getWidgets().get(0);
             widget.setPage(page);
             widget.setFlags(PdfAnnotation.PRINT);
+            widget.setVisibility(PdfAnnotation.VISIBLE);
             clearHiddenFlags(widget);
             PdfNumber flagNumber = new PdfNumber(widget.getFlags());
             widget.getPdfObject().put(PdfName.F, flagNumber);
@@ -442,6 +443,7 @@ public final class NursingRecordSigner {
         flags &= ~PdfAnnotation.TOGGLE_NO_VIEW;
         flags &= ~PdfAnnotation.NO_VIEW;
         widget.setFlags(flags | PdfAnnotation.PRINT);
+        widget.setVisibility(PdfAnnotation.VISIBLE);
     }
 
     private static PdfFont resolveAppearanceFont() {
@@ -517,6 +519,13 @@ public final class NursingRecordSigner {
             PdfFormField field = acro.getField(sigName);
             if (field == null) {
                 throw new IllegalStateException("Signature field missing: " + sigName);
+            }
+            PdfName fieldType = field.getFormType();
+            if (fieldType == null) {
+                fieldType = field.getPdfObject().getAsName(PdfName.FT);
+            }
+            if (!PdfName.Sig.equals(fieldType)) {
+                throw new IllegalStateException("Signature field is not /FT /Sig: " + sigName);
             }
             PdfDictionary fieldDict = field.getPdfObject();
             PdfDictionary sigDict = fieldDict.getAsDictionary(PdfName.V);
