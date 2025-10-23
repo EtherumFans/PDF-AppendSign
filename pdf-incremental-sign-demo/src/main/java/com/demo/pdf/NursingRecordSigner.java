@@ -10,11 +10,13 @@ import com.itextpdf.io.font.constants.StandardFonts;
 import com.itextpdf.kernel.font.PdfFont;
 import com.itextpdf.kernel.font.PdfFontFactory;
 import com.itextpdf.kernel.geom.Rectangle;
+import com.itextpdf.kernel.pdf.PdfArray;
 import com.itextpdf.kernel.pdf.PdfDictionary;
 import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfName;
 import com.itextpdf.kernel.pdf.PdfReader;
 import com.itextpdf.kernel.pdf.StampingProperties;
+import com.itextpdf.kernel.pdf.PdfString;
 import com.itextpdf.kernel.pdf.annot.PdfAnnotation;
 import com.itextpdf.kernel.pdf.annot.PdfWidgetAnnotation;
 import com.itextpdf.signatures.BouncyCastleDigest;
@@ -185,6 +187,8 @@ public final class NursingRecordSigner {
         Path destPath = Path.of(params.getDestination());
         long originalSize = Files.size(srcPath);
 
+        PdfSanityUtil.requireHeader(srcPath);
+
         List<String> baselineNames;
         try (PdfReader baselineReader = new PdfReader(params.getSource());
              PdfDocument baselineDoc = new PdfDocument(baselineReader)) {
@@ -214,6 +218,7 @@ public final class NursingRecordSigner {
             PdfDocument document = signer.getDocument();
             PdfAcroForm acro = PdfAcroForm.getAcroForm(document, true);
             FormUtil.ensureNeedAppearances(acro);
+            acro.setSignatureFlags(PdfAcroForm.SIGNATURE_EXIST);
 
             if (params.getPage() < 1 || params.getPage() > document.getNumberOfPages()) {
                 throw new IllegalArgumentException("Page " + params.getPage() + " is out of bounds");
@@ -282,46 +287,8 @@ public final class NursingRecordSigner {
             throw new IllegalStateException("Destination PDF did not grow after signing; aborting to avoid overwriting");
         }
 
-        try (PdfDocument pdf = new PdfDocument(new PdfReader(destPath.toString()))) {
-            PdfAcroForm acro = PdfAcroForm.getAcroForm(pdf, false);
-            if (acro == null) {
-                throw new IllegalStateException("Signed document has no AcroForm");
-            }
-            SignatureUtil util = new SignatureUtil(pdf);
-            List<String> names = util.getSignatureNames();
-            if (names.size() != initialSignatureCount + 1) {
-                throw new IllegalStateException("Expected signature count to increase by 1 (" + initialSignatureCount + " -> "
-                        + (initialSignatureCount + 1) + ") but got " + names.size());
-            }
-            if (!names.contains(sigName)) {
-                throw new IllegalStateException("Verification did not find signature field " + sigName);
-            }
-            PdfFormField field = acro.getField(sigName);
-            if (field == null) {
-                throw new IllegalStateException("AcroForm is missing signature field " + sigName + " after signing");
-            }
-            PdfDictionary fieldDict = field.getPdfObject();
-            PdfDictionary sigDict = fieldDict != null ? fieldDict.getAsDictionary(PdfName.V) : null;
-            if (sigDict == null) {
-                throw new IllegalStateException("Signature field " + sigName + " has no dictionary value");
-            }
-            PdfName filter = sigDict.getAsName(PdfName.Filter);
-            if (!PdfName.Adobe_PPKLite.equals(filter)) {
-                String actual = filter != null ? "/" + filter.getValue() : "null";
-                throw new IllegalStateException("Signature filter for " + sigName + " was " + actual
-                        + ", expected /Adobe.PPKLite");
-            }
-            PdfName subFilter = sigDict.getAsName(PdfName.SubFilter);
-            if (!PdfName.Adbe_pkcs7_detached.equals(subFilter)) {
-                String actual = subFilter != null ? "/" + subFilter.getValue() : "null";
-                throw new IllegalStateException("Signature subfilter for " + sigName + " was " + actual
-                        + ", expected /adbe.pkcs7.detached");
-            }
-            PdfPKCS7 pkcs7 = util.readSignatureData(sigName);
-            if (pkcs7 == null || !pkcs7.verifySignatureIntegrityAndAuthenticity()) {
-                throw new IllegalStateException("Signature " + sigName + " failed integrity verification");
-            }
-        }
+        PdfSanityUtil.requireHeader(destPath);
+        validateSignedOutput(destPath, sigName, initialSignatureCount);
         System.out.println("[sign-row] Signature applied in append mode");
     }
 
@@ -509,6 +476,83 @@ public final class NursingRecordSigner {
 
         int getPageNumber() {
             return pageNumber;
+        }
+    }
+
+    private static void validateSignedOutput(Path destPath, String sigName, int initialSignatureCount) throws Exception {
+        try (PdfDocument pdf = new PdfDocument(new PdfReader(destPath.toString()))) {
+            PdfAcroForm acro = PdfAcroForm.getAcroForm(pdf, false);
+            if (acro == null) {
+                throw new IllegalStateException("No AcroForm found after signing");
+            }
+            SignatureUtil util = new SignatureUtil(pdf);
+            List<String> names = util.getSignatureNames();
+            if (names == null || names.isEmpty()) {
+                throw new IllegalStateException("No field-bound signatures found (Adobe panel will be empty)");
+            }
+            if (initialSignatureCount >= 0 && names.size() != initialSignatureCount + 1) {
+                throw new IllegalStateException("Expected signature count to increase by 1 (" + initialSignatureCount
+                        + " -> " + (initialSignatureCount + 1) + ") but got " + names.size());
+            }
+            if (!names.contains(sigName)) {
+                throw new IllegalStateException("Expected signature name not found: " + sigName);
+            }
+            PdfFormField field = acro.getField(sigName);
+            if (field == null) {
+                throw new IllegalStateException("AcroForm is missing signature field " + sigName + " after signing");
+            }
+            PdfDictionary fieldDict = field.getPdfObject();
+            PdfDictionary sigDict = fieldDict != null ? fieldDict.getAsDictionary(PdfName.V) : null;
+            if (sigDict == null) {
+                throw new IllegalStateException("Field /V is null (not a signature)");
+            }
+            PdfName type = sigDict.getAsName(PdfName.Type);
+            if (!PdfName.Sig.equals(type)) {
+                String actual = type != null ? "/" + type.getValue() : "null";
+                throw new IllegalStateException("Field /V Type not /Sig: " + actual);
+            }
+            PdfName filter = sigDict.getAsName(PdfName.Filter);
+            if (filter == null || !PdfName.Adobe_PPKLite.equals(filter)) {
+                String actual = filter != null ? "/" + filter.getValue() : "null";
+                throw new IllegalStateException("Signature Filter is not /Adobe.PPKLite: " + actual);
+            }
+            PdfName subFilter = sigDict.getAsName(PdfName.SubFilter);
+            if (subFilter == null || !(PdfName.Adbe_pkcs7_detached.equals(subFilter)
+                    || PdfName.ETSI_CAdES_detached.equals(subFilter))) {
+                String actual = subFilter != null ? "/" + subFilter.getValue() : "null";
+                throw new IllegalStateException("Signature SubFilter not CMS/CAdES: " + actual);
+            }
+            PdfPKCS7 pkcs7 = util.readSignatureData(sigName);
+            if (pkcs7 == null || !pkcs7.verifySignatureIntegrityAndAuthenticity()) {
+                throw new IllegalStateException("PKCS7 integrity/authenticity failed");
+            }
+            PdfArray br = sigDict.getAsArray(PdfName.ByteRange);
+            if (br == null || br.size() != 4 || br.getAsNumber(0).longValue() != 0L) {
+                throw new IllegalStateException("Invalid /ByteRange: " + br);
+            }
+            long br1 = br.getAsNumber(1).longValue();
+            long br2 = br.getAsNumber(2).longValue();
+            long br3 = br.getAsNumber(3).longValue();
+            long fileLength = Files.size(destPath);
+            if (br1 < 0 || br2 < 0 || br3 < 0) {
+                throw new IllegalStateException("Negative value in /ByteRange: " + br);
+            }
+            if (br1 > fileLength || br2 + br3 > fileLength) {
+                throw new IllegalStateException("/ByteRange exceeds file length: " + br);
+            }
+            if (br2 < br1) {
+                throw new IllegalStateException("/ByteRange offsets overlap: " + br);
+            }
+            PdfString contents = sigDict.getAsString(PdfName.Contents);
+            if (contents == null) {
+                throw new IllegalStateException("/Contents must be present");
+            }
+            if (!contents.isHexWriting()) {
+                throw new IllegalStateException("/Contents must be a hex string");
+            }
+            if ((contents.getValueBytes().length & 1) != 0) {
+                throw new IllegalStateException("/Contents must be a hex string with even length");
+            }
         }
     }
 }
