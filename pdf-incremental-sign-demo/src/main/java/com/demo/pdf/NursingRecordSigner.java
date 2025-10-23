@@ -10,23 +10,17 @@ import com.itextpdf.io.source.RandomAccessFileOrArray;
 import com.itextpdf.kernel.font.PdfFont;
 import com.itextpdf.kernel.font.PdfFontFactory;
 import com.itextpdf.kernel.geom.Rectangle;
-import com.itextpdf.kernel.pdf.PdfArray;
-import com.itextpdf.kernel.pdf.PdfDictionary;
 import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfName;
-import com.itextpdf.kernel.pdf.PdfNumber;
-import com.itextpdf.kernel.pdf.PdfObject;
 import com.itextpdf.kernel.pdf.PdfPage;
 import com.itextpdf.kernel.pdf.PdfReader;
 import com.itextpdf.kernel.pdf.StampingProperties;
-import com.itextpdf.kernel.pdf.PdfString;
 import com.itextpdf.kernel.pdf.annot.PdfAnnotation;
 import com.itextpdf.kernel.pdf.annot.PdfWidgetAnnotation;
 import com.itextpdf.signatures.BouncyCastleDigest;
 import com.itextpdf.signatures.DigestAlgorithms;
 import com.itextpdf.signatures.IExternalDigest;
 import com.itextpdf.signatures.IExternalSignature;
-import com.itextpdf.signatures.PdfPKCS7;
 import com.itextpdf.signatures.PdfSignatureAppearance;
 import com.itextpdf.signatures.PdfSigner;
 import com.itextpdf.signatures.PrivateKeySignature;
@@ -215,6 +209,8 @@ public final class NursingRecordSigner {
 
         String sigName = "sig_row_" + params.getRow();
 
+        SignatureFieldContext signatureContext = null;
+
         try (PdfReader reader = new PdfReader(params.getSource());
              FileOutputStream fos = new FileOutputStream(params.getDestination())) {
             PdfSigner signer = new PdfSigner(reader, fos, new StampingProperties().useAppendMode());
@@ -242,7 +238,7 @@ public final class NursingRecordSigner {
                     LayoutUtil.FieldSlot.TEXT, true, effectiveMode);
             PdfTextFormField nurseField = resolveTextField(document, acro, params.getPage(), pageSize, params.getRow(), nurseName,
                     LayoutUtil.FieldSlot.NURSE, false, effectiveMode);
-            SignatureFieldContext signatureContext = ensureSignatureField(document, acro, params.getPage(),
+            signatureContext = ensureSignatureField(document, acro, params.getPage(),
                     params.getRow(), sigName, effectiveMode);
 
             if (baselineSet.contains(sigName)) {
@@ -289,7 +285,11 @@ public final class NursingRecordSigner {
             throw new IllegalStateException("Destination PDF did not grow after signing; aborting to avoid overwriting");
         }
 
-        validateSignedOutput(destPath, sigName, initialSignatureCount);
+        if (signatureContext == null) {
+            throw new IllegalStateException("Signature field context unavailable after signing");
+        }
+        validateSignedOutput(destPath, sigName, initialSignatureCount,
+                signatureContext.getPageNumber(), new Rectangle(signatureContext.getRect()));
         System.out.println("[sign-row] Signature applied in append mode");
     }
 
@@ -411,7 +411,7 @@ public final class NursingRecordSigner {
             throw new IllegalStateException("Signature widget for " + name + " has invalid rectangle");
         }
         Rectangle expectedRect = LayoutUtil.sigRectForRow(document, pageNumber, row);
-        if (!rectanglesSimilar(widgetRect, expectedRect)) {
+        if (!SignatureDiagnostics.rectanglesSimilar(widgetRect, expectedRect)) {
             throw new IllegalStateException("Signature widget rectangle mismatch for " + name);
         }
         int flags = targetWidget.getFlags();
@@ -421,37 +421,8 @@ public final class NursingRecordSigner {
         if ((flags & (PdfAnnotation.HIDDEN | PdfAnnotation.INVISIBLE | PdfAnnotation.TOGGLE_NO_VIEW | PdfAnnotation.NOVIEW)) != 0) {
             throw new IllegalStateException("Signature widget " + name + " is hidden or not viewable");
         }
-        ensureWidgetInAnnots(targetWidget.getPage(), targetWidget);
+        PdfWidgetUtil.ensureWidgetInAnnots(targetWidget.getPage(), targetWidget, name);
         return new SignatureFieldContext(field, targetWidget, widgetRect, pageNumber);
-    }
-
-    private static void ensureWidgetInAnnots(PdfPage page, PdfWidgetAnnotation widget) {
-        PdfPage actualPage = page != null ? page : widget.getPage();
-        if (actualPage == null) {
-            throw new IllegalStateException("Signature widget is not associated with any page");
-        }
-        PdfArray annots = actualPage.getPdfObject().getAsArray(PdfName.Annots);
-        if (annots == null) {
-            PdfDocument doc = actualPage.getDocument();
-            int pageNumber = doc != null ? doc.getPageNumber(actualPage) : -1;
-            throw new IllegalStateException("Page " + pageNumber + " has no /Annots array");
-        }
-        PdfDictionary widgetObject = widget.getPdfObject();
-        boolean found = false;
-        for (int i = 0; i < annots.size(); i++) {
-            PdfObject obj = annots.get(i);
-            if (obj != null && obj.getIndirectReference() == widgetObject.getIndirectReference()) {
-                found = true;
-                break;
-            }
-            if (obj != null && obj.equals(widgetObject)) {
-                found = true;
-                break;
-            }
-        }
-        if (!found) {
-            throw new IllegalStateException("Signature widget is not listed in page /Annots array");
-        }
     }
 
     private static void clearHiddenFlags(PdfWidgetAnnotation widget) {
@@ -480,14 +451,6 @@ public final class NursingRecordSigner {
                 throw new IllegalStateException("Unable to initialize fallback font", fallback);
             }
         }
-    }
-
-    private static boolean rectanglesSimilar(Rectangle a, Rectangle b) {
-        final float tolerance = 0.5f;
-        return Math.abs(a.getX() - b.getX()) <= tolerance
-                && Math.abs(a.getY() - b.getY()) <= tolerance
-                && Math.abs(a.getWidth() - b.getWidth()) <= tolerance
-                && Math.abs(a.getHeight() - b.getHeight()) <= tolerance;
     }
 
     private static final class SignatureFieldContext {
@@ -520,7 +483,8 @@ public final class NursingRecordSigner {
         }
     }
 
-    private static void validateSignedOutput(Path destPath, String sigName, int initialSignatureCount) throws Exception {
+    private static void validateSignedOutput(Path destPath, String sigName, int initialSignatureCount,
+                                             int expectedPage, Rectangle expectedRect) throws Exception {
         requirePdfHeader(destPath);
         try (PdfDocument pdf = new PdfDocument(new PdfReader(destPath.toString()))) {
             PdfAcroForm acro = PdfAcroForm.getAcroForm(pdf, false);
@@ -539,80 +503,14 @@ public final class NursingRecordSigner {
             if (!names.contains(sigName)) {
                 throw new IllegalStateException("Expected signature name not found: " + sigName);
             }
-            PdfFormField field = acro.getField(sigName);
-            if (field == null) {
-                throw new IllegalStateException("AcroForm is missing signature field " + sigName + " after signing");
+            SignatureDiagnostics.SignatureCheckResult result =
+                    SignatureDiagnostics.inspectSignature(destPath, pdf, util, acro, sigName);
+            if (result.getPageNumber() != expectedPage) {
+                throw new IllegalStateException("Signature widget for " + sigName + " expected on page "
+                        + expectedPage + " but found on page " + result.getPageNumber());
             }
-            List<PdfWidgetAnnotation> widgets = field.getWidgets();
-            if (widgets == null || widgets.isEmpty()) {
-                throw new IllegalStateException("Signature field has no widget annotations: " + sigName);
-            }
-            PdfWidgetAnnotation widget = widgets.get(0);
-            PdfPage widgetPage = widget.getPage();
-            if (widgetPage == null) {
-                throw new IllegalStateException("Signature widget has no page reference: " + sigName);
-            }
-            ensureWidgetInAnnots(widgetPage, widget);
-            PdfNumber flagNumber = widget.getPdfObject().getAsNumber(PdfName.F);
-            int flags = flagNumber != null ? flagNumber.intValue() : 0;
-            if ((flags & PdfAnnotation.PRINT) == 0) {
-                throw new IllegalStateException("Signature widget is not printable (missing PRINT flag)");
-            }
-            if ((flags & (PdfAnnotation.HIDDEN | PdfAnnotation.INVISIBLE | PdfAnnotation.TOGGLE_NO_VIEW | PdfAnnotation.NOVIEW)) != 0) {
-                throw new IllegalStateException("Signature widget is hidden or not viewable");
-            }
-            PdfDictionary fieldDict = field.getPdfObject();
-            PdfDictionary sigDict = fieldDict != null ? fieldDict.getAsDictionary(PdfName.V) : null;
-            if (sigDict == null) {
-                throw new IllegalStateException("Field /V is null (not a signature)");
-            }
-            PdfName type = sigDict.getAsName(PdfName.Type);
-            if (!PdfName.Sig.equals(type)) {
-                String actual = type != null ? "/" + type.getValue() : "null";
-                throw new IllegalStateException("Field /V Type not /Sig: " + actual);
-            }
-            PdfName filter = sigDict.getAsName(PdfName.Filter);
-            if (filter == null || !PdfName.Adobe_PPKLite.equals(filter)) {
-                String actual = filter != null ? "/" + filter.getValue() : "null";
-                throw new IllegalStateException("Signature Filter is not /Adobe.PPKLite: " + actual);
-            }
-            PdfName subFilter = sigDict.getAsName(PdfName.SubFilter);
-            if (subFilter == null || !(PdfName.Adbe_pkcs7_detached.equals(subFilter)
-                    || PdfName.adbe_pkcs7_detached.equals(subFilter)
-                    || PdfName.ETSI_CAdES_detached.equals(subFilter))) {
-                String actual = subFilter != null ? "/" + subFilter.getValue() : "null";
-                throw new IllegalStateException("Signature SubFilter not CMS/CAdES: " + actual);
-            }
-            PdfPKCS7 pkcs7 = util.readSignatureData(sigName);
-            if (pkcs7 == null || !pkcs7.verifySignatureIntegrityAndAuthenticity()) {
-                throw new IllegalStateException("PKCS7 integrity/authenticity failed");
-            }
-            PdfArray br = sigDict.getAsArray(PdfName.ByteRange);
-            if (br == null || br.size() != 4 || br.getAsNumber(0).longValue() != 0L) {
-                throw new IllegalStateException("Invalid /ByteRange: " + br);
-            }
-            long br1 = br.getAsNumber(1).longValue();
-            long br2 = br.getAsNumber(2).longValue();
-            long br3 = br.getAsNumber(3).longValue();
-            long fileLength = Files.size(destPath);
-            if (br1 < 0 || br2 < 0 || br3 < 0) {
-                throw new IllegalStateException("Negative value in /ByteRange: " + br);
-            }
-            if (br1 > fileLength || br2 + br3 > fileLength) {
-                throw new IllegalStateException("/ByteRange exceeds file length: " + br);
-            }
-            if (br2 < br1) {
-                throw new IllegalStateException("/ByteRange offsets overlap: " + br);
-            }
-            PdfString contents = sigDict.getAsString(PdfName.Contents);
-            if (contents == null) {
-                throw new IllegalStateException("/Contents must be present");
-            }
-            if (!contents.isHexWriting()) {
-                throw new IllegalStateException("/Contents must be a hex string");
-            }
-            if ((contents.getValueBytes().length & 1) != 0) {
-                throw new IllegalStateException("/Contents must be a hex string with even length");
+            if (!SignatureDiagnostics.rectanglesSimilar(result.getWidgetRect(), expectedRect)) {
+                throw new IllegalStateException("Signature widget rectangle mismatch for " + sigName);
             }
         }
     }
