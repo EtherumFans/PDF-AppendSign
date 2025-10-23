@@ -24,6 +24,9 @@ import java.util.Map;
 
 public final class PdfStructureDebugger {
 
+    private static final PdfName SUBFILTER_ADBE_PKCS7_DETACHED = new PdfName("adbe.pkcs7.detached");
+    private static final PdfName SUBFILTER_ETSI_CADES_DETACHED = new PdfName("ETSI.CAdES.detached");
+
     private PdfStructureDebugger() {
     }
 
@@ -127,7 +130,7 @@ public final class PdfStructureDebugger {
                     ok = false;
                     System.out.println("  !! Widget is not printable (missing PRINT flag)");
                 }
-                if ((flags & (PdfAnnotation.HIDDEN | PdfAnnotation.INVISIBLE | PdfAnnotation.TOGGLE_NO_VIEW | PdfAnnotation.NOVIEW)) != 0) {
+                if ((flags & (PdfAnnotation.HIDDEN | PdfAnnotation.INVISIBLE | PdfAnnotation.TOGGLE_NO_VIEW | PdfAnnotation.NO_VIEW)) != 0) {
                     ok = false;
                     System.out.println("  !! Widget is hidden or not viewable");
                     System.out.println("  Hint: Clear HIDDEN/INVISIBLE/TOGGLE_NO_VIEW flags before signing.");
@@ -170,7 +173,8 @@ public final class PdfStructureDebugger {
             System.out.println("  !! Filter must be /Adobe.PPKLite");
         }
         if (subFilter == null || !(PdfName.Adbe_pkcs7_detached.equals(subFilter)
-                || PdfName.ETSI_CAdES_detached.equals(subFilter))) {
+                || SUBFILTER_ADBE_PKCS7_DETACHED.equals(subFilter)
+                || SUBFILTER_ETSI_CADES_DETACHED.equals(subFilter))) {
             ok = false;
             System.out.println("  !! SubFilter must be /adbe.pkcs7.detached or /ETSI.CAdES.detached");
         }
