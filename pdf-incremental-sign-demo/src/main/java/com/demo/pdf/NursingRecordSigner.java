@@ -52,6 +52,7 @@ public final class NursingRecordSigner {
     }
 
     private static final PdfName SUBFILTER_ADBE_PKCS7_DETACHED = new PdfName("adbe.pkcs7.detached");
+    private static final PdfName SUBFILTER_ETSI_CADES_DETACHED = new PdfName("ETSI.CAdES.detached");
 
     public enum SigningMode {
         TEMPLATE,
@@ -530,7 +531,7 @@ public final class NursingRecordSigner {
             PdfName sub = sigDict.getAsName(PdfName.SubFilter);
             if (!(PdfName.Adbe_pkcs7_detached.equals(sub)
                     || SUBFILTER_ADBE_PKCS7_DETACHED.equals(sub)
-                    || PdfName.ETSI_CAdES_detached.equals(sub))) {
+                    || SUBFILTER_ETSI_CADES_DETACHED.equals(sub))) {
                 throw new IllegalStateException("SubFilter is not CMS/CAdES: " + sub);
             }
 
