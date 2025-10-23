@@ -6,7 +6,9 @@ import com.itextpdf.forms.fields.PdfFormField;
 import com.itextpdf.forms.fields.PdfTextFormField;
 import com.itextpdf.io.font.PdfEncodings;
 import com.itextpdf.io.font.constants.StandardFonts;
+import com.itextpdf.io.source.IRandomAccessSource;
 import com.itextpdf.io.source.RandomAccessFileOrArray;
+import com.itextpdf.io.source.RandomAccessSourceFactory;
 import com.itextpdf.kernel.font.PdfFont;
 import com.itextpdf.kernel.font.PdfFontFactory;
 import com.itextpdf.kernel.geom.Rectangle;
@@ -418,7 +420,7 @@ public final class NursingRecordSigner {
         if ((flags & PdfAnnotation.PRINT) == 0) {
             throw new IllegalStateException("Signature widget " + name + " is not printable (missing PRINT flag)");
         }
-        if ((flags & (PdfAnnotation.HIDDEN | PdfAnnotation.INVISIBLE | PdfAnnotation.TOGGLE_NO_VIEW | PdfAnnotation.NOVIEW)) != 0) {
+        if ((flags & (PdfAnnotation.HIDDEN | PdfAnnotation.INVISIBLE | PdfAnnotation.TOGGLE_NO_VIEW | PdfAnnotation.NO_VIEW)) != 0) {
             throw new IllegalStateException("Signature widget " + name + " is hidden or not viewable");
         }
         PdfWidgetUtil.ensureWidgetInAnnots(targetWidget.getPage(), targetWidget, name);
@@ -430,7 +432,7 @@ public final class NursingRecordSigner {
         flags &= ~PdfAnnotation.HIDDEN;
         flags &= ~PdfAnnotation.INVISIBLE;
         flags &= ~PdfAnnotation.TOGGLE_NO_VIEW;
-        flags &= ~PdfAnnotation.NOVIEW;
+        flags &= ~PdfAnnotation.NO_VIEW;
         widget.setFlags(flags | PdfAnnotation.PRINT);
     }
 
@@ -516,12 +518,20 @@ public final class NursingRecordSigner {
     }
 
     private static void requirePdfHeader(Path destPath) throws Exception {
-        try (RandomAccessFileOrArray raf = new RandomAccessFileOrArray(destPath.toString())) {
+        RandomAccessSourceFactory sourceFactory = new RandomAccessSourceFactory();
+        RandomAccessFileOrArray raf = null;
+        try {
+            IRandomAccessSource source = sourceFactory.createBestSource(destPath.toString());
+            raf = new RandomAccessFileOrArray(source);
             byte[] head = new byte[8];
             raf.readFully(head, 0, 8);
             String headStr = new String(head, java.nio.charset.StandardCharsets.US_ASCII);
             if (!headStr.startsWith("%PDF-")) {
                 throw new IllegalStateException("PDF header is not at byte 0 (BOM or stray bytes). Adobe may ignore signatures.");
+            }
+        } finally {
+            if (raf != null) {
+                raf.close();
             }
         }
     }
