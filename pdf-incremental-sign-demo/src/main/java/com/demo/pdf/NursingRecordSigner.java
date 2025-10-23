@@ -9,7 +9,10 @@ import com.itextpdf.io.font.constants.StandardFonts;
 import com.itextpdf.kernel.font.PdfFont;
 import com.itextpdf.kernel.font.PdfFontFactory;
 import com.itextpdf.kernel.geom.Rectangle;
+import com.itextpdf.kernel.pdf.PdfArray;
+import com.itextpdf.kernel.pdf.PdfDictionary;
 import com.itextpdf.kernel.pdf.PdfDocument;
+import com.itextpdf.kernel.pdf.PdfObject;
 import com.itextpdf.kernel.pdf.PdfName;
 import com.itextpdf.kernel.pdf.PdfNumber;
 import com.itextpdf.kernel.pdf.PdfPage;
@@ -34,8 +37,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyStore;
 import java.security.PrivateKey;
+import java.security.Security;
+import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
-import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -201,12 +206,7 @@ public final class NursingRecordSigner {
             pkcs12Path = DemoKeystoreUtil.createDemoP12().toAbsolutePath().toString();
             System.out.println("[sign-row] Using generated demo PKCS#12: " + pkcs12Path);
         }
-        KeyStore ks = DemoKeystoreUtil.loadKeyStore(pkcs12Path, password);
-        KeyStore.PrivateKeyEntry entry = DemoKeystoreUtil.firstPrivateKey(ks, password);
-        PrivateKey privateKey = entry.getPrivateKey();
-        X509Certificate[] chain = Arrays.stream(entry.getCertificateChain())
-                .map(cert -> (X509Certificate) cert)
-                .toArray(X509Certificate[]::new);
+        KeyMaterial keyMaterial = loadKeyMaterial(pkcs12Path, password);
 
         String sigName = "sig_row_" + params.getRow();
 
@@ -274,13 +274,19 @@ public final class NursingRecordSigner {
             appearance.setLayer2Font(font);
             appearance.setLayer2Text(layer2);
 
-            IExternalSignature pks = new PrivateKeySignature(privateKey, DigestAlgorithms.SHA256, BouncyCastleProvider.PROVIDER_NAME);
+            if (keyMaterial.x509Chain.length > 0) {
+                System.out.println("[sign-row] Signer cert subject: "
+                        + keyMaterial.x509Chain[0].getSubjectX500Principal());
+                System.out.println("[sign-row] Certificate chain length: " + keyMaterial.x509Chain.length);
+            }
+
+            IExternalSignature pks = new PrivateKeySignature(keyMaterial.key, DigestAlgorithms.SHA256, BouncyCastleProvider.PROVIDER_NAME);
             IExternalDigest digest = new BouncyCastleDigest();
             TSAClientBouncyCastle tsaClient = null;
             if (params.getTsaUrl() != null && !params.getTsaUrl().isBlank()) {
                 tsaClient = new TSAClientBouncyCastle(params.getTsaUrl());
             }
-            signer.signDetached(digest, pks, chain, null, null, tsaClient, 0, PdfSigner.CryptoStandard.CMS);
+            signer.signDetached(digest, pks, keyMaterial.certificateChain, null, null, tsaClient, 0, PdfSigner.CryptoStandard.CMS);
         }
 
         long newSize = Files.size(destPath);
@@ -305,12 +311,7 @@ public final class NursingRecordSigner {
             pkcs12 = DemoKeystoreUtil.createDemoP12().toAbsolutePath().toString();
             System.out.println("[certify] Generated demo PKCS#12 at " + pkcs12);
         }
-        KeyStore ks = DemoKeystoreUtil.loadKeyStore(pkcs12, pwd);
-        KeyStore.PrivateKeyEntry entry = DemoKeystoreUtil.firstPrivateKey(ks, pwd);
-        PrivateKey privateKey = entry.getPrivateKey();
-        X509Certificate[] chain = Arrays.stream(entry.getCertificateChain())
-                .map(cert -> (X509Certificate) cert)
-                .toArray(X509Certificate[]::new);
+        KeyMaterial keyMaterial = loadKeyMaterial(pkcs12, pwd);
 
         try (PdfReader reader = new PdfReader(src);
              FileOutputStream fos = new FileOutputStream(dest)) {
@@ -318,7 +319,7 @@ public final class NursingRecordSigner {
             if (DocMDPUtil.hasDocMDP(signer.getDocument())) {
                 throw new IllegalStateException("Document already has DocMDP certification");
             }
-            DocMDPUtil.applyCertification(signer, privateKey, chain, DocMDPUtil.Permission.FORM_FILL_AND_SIGNATURES);
+            DocMDPUtil.applyCertification(signer, keyMaterial.key, keyMaterial.x509Chain, DocMDPUtil.Permission.FORM_FILL_AND_SIGNATURES);
         }
     }
 
@@ -378,13 +379,11 @@ public final class NursingRecordSigner {
             PdfFormField createdField = PdfFormField.createSignature(document, rect);
             createdField.setFieldName(name);
             PdfWidgetAnnotation widget = createdField.getWidgets().get(0);
-            widget.setPage(page);
-            widget.setFlags(PdfAnnotation.PRINT);
-            clearHiddenFlags(widget);
+            attachWidgetToPage(page, widget, name);
             PdfNumber flagNumber = new PdfNumber(widget.getFlags());
             widget.getPdfObject().put(PdfName.F, flagNumber);
             acro.addField(createdField);
-            page.addAnnotation(widget);
+            ensureWidgetRegistered(page, widget);
             return new SignatureFieldContext(createdField, widget, rect, pageNumber);
         }
         PdfName formType = field.getFormType();
@@ -412,6 +411,8 @@ public final class NursingRecordSigner {
         if (targetWidget == null) {
             throw new IllegalStateException("Signature field " + name + " is not placed on page " + pageNumber);
         }
+        attachWidgetToPage(page, targetWidget, name);
+        ensureWidgetRegistered(page, targetWidget);
         Rectangle widgetRect = targetWidget.getRectangle().toRectangle();
         if (widgetRect.getWidth() <= 0 || widgetRect.getHeight() <= 0) {
             throw new IllegalStateException("Signature widget for " + name + " has invalid rectangle");
@@ -439,6 +440,49 @@ public final class NursingRecordSigner {
         widget.setFlag(PdfAnnotation.PRINT);
     }
 
+    private static void attachWidgetToPage(PdfPage page, PdfWidgetAnnotation widget, String fieldName) {
+        if (page == null) {
+            throw new IllegalStateException("Cannot attach widget for " + fieldName + " to null page");
+        }
+        clearHiddenFlags(widget);
+        widget.setPage(page);
+        PdfDictionary widgetObject = widget.getPdfObject();
+        int flags = widget.getFlags() | PdfAnnotation.PRINT;
+        widget.setFlags(flags);
+        widgetObject.put(PdfName.P, page.getPdfObject());
+        widgetObject.put(PdfName.F, new PdfNumber(flags));
+    }
+
+    private static void ensureWidgetRegistered(PdfPage page, PdfWidgetAnnotation widget) {
+        PdfDictionary pageObject = page.getPdfObject();
+        PdfArray annots = pageObject.getAsArray(PdfName.Annots);
+        if (annots == null) {
+            annots = new PdfArray();
+            pageObject.put(PdfName.Annots, annots);
+        }
+        PdfDictionary widgetObject = widget.getPdfObject();
+        if (!containsAnnotationReference(annots, widgetObject)) {
+            annots.add(widgetObject);
+        }
+    }
+
+    private static boolean containsAnnotationReference(PdfArray annots, PdfDictionary widgetObject) {
+        for (int i = 0; i < annots.size(); i++) {
+            PdfObject candidate = annots.get(i);
+            if (candidate == null) {
+                continue;
+            }
+            if (candidate.getIndirectReference() != null && widgetObject.getIndirectReference() != null
+                    && candidate.getIndirectReference().equals(widgetObject.getIndirectReference())) {
+                return true;
+            }
+            if (candidate.equals(widgetObject)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static PdfFont resolveAppearanceFont() {
         try {
             Path bundled = Path.of("fonts", "NotoSansCJKsc-Regular.otf");
@@ -455,6 +499,52 @@ public final class NursingRecordSigner {
             } catch (Exception fallback) {
                 throw new IllegalStateException("Unable to initialize fallback font", fallback);
             }
+        }
+    }
+
+    private static KeyMaterial loadKeyMaterial(String pkcs12Path, char[] password) throws Exception {
+        Security.addProvider(new BouncyCastleProvider());
+        KeyStore ks = KeyStore.getInstance("PKCS12");
+        try (java.io.InputStream is = java.nio.file.Files.newInputStream(Path.of(pkcs12Path))) {
+            ks.load(is, password);
+        }
+        String alias = Collections.list(ks.aliases()).stream()
+                .filter(a -> {
+                    try {
+                        return ks.isKeyEntry(a);
+                    } catch (Exception e) {
+                        return false;
+                    }
+                })
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("No key entry in PKCS#12: " + pkcs12Path));
+        PrivateKey key = (PrivateKey) ks.getKey(alias, password);
+        if (key == null) {
+            throw new IllegalStateException("PrivateKey is null for alias: " + alias);
+        }
+        Certificate[] chain = ks.getCertificateChain(alias);
+        if (chain == null || chain.length == 0) {
+            throw new IllegalStateException("Certificate chain is empty (cannot embed signer cert).");
+        }
+        X509Certificate[] x509Chain = new X509Certificate[chain.length];
+        for (int i = 0; i < chain.length; i++) {
+            if (!(chain[i] instanceof X509Certificate)) {
+                throw new IllegalStateException("Certificate chain entry is not X509Certificate: index " + i);
+            }
+            x509Chain[i] = (X509Certificate) chain[i];
+        }
+        return new KeyMaterial(key, chain.clone(), x509Chain);
+    }
+
+    private static final class KeyMaterial {
+        private final PrivateKey key;
+        private final Certificate[] certificateChain;
+        private final X509Certificate[] x509Chain;
+
+        private KeyMaterial(PrivateKey key, Certificate[] certificateChain, X509Certificate[] x509Chain) {
+            this.key = key;
+            this.certificateChain = certificateChain;
+            this.x509Chain = x509Chain;
         }
     }
 

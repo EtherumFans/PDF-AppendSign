@@ -130,12 +130,24 @@ public class App {
 
     @CommandLine.Command(name = "verify", description = "Verify signatures and list FieldMDP locks")
     static class VerifyPdf implements Callable<Integer> {
-        @CommandLine.Option(names = "--pdf", required = true, description = "PDF to verify")
+        @CommandLine.Option(names = "--pdf", required = false, description = "PDF to verify")
         private Path pdf;
+
+        @CommandLine.Parameters(index = "0", arity = "0..1", description = "PDF to verify")
+        private Path positional;
 
         @Override
         public Integer call() throws Exception {
-            int rc = SignatureVerifier.verify(pdf.toAbsolutePath().toString());
+            Path target = pdf != null ? pdf : positional;
+            if (pdf != null && positional != null && !pdf.equals(positional)) {
+                throw new CommandLine.ParameterException(new CommandLine(this),
+                        "Specify either --pdf or positional argument (not both) or ensure they match.");
+            }
+            if (target == null) {
+                throw new CommandLine.ParameterException(new CommandLine(this),
+                        "No PDF specified. Use --pdf <file> or provide a positional argument.");
+            }
+            int rc = SignatureVerifier.verify(target.toAbsolutePath().toString());
             if (rc != 0) {
                 return rc;
             }

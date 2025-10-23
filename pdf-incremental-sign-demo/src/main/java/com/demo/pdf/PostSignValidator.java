@@ -99,6 +99,9 @@ public final class PostSignValidator {
             }
 
             PdfPKCS7 pk = su.readSignatureData(fname);
+            if (pk.getSigningCertificate() == null) {
+                throw new IllegalStateException("Signing certificate missing in PKCS#7 Contents (cannot verify).");
+            }
             if (!pk.verifySignatureIntegrityAndAuthenticity()) {
                 throw new IllegalStateException("PKCS7 integrity/authenticity failed.");
             }

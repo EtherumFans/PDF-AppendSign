@@ -17,6 +17,8 @@ import com.itextpdf.signatures.SignatureUtil;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.cert.Certificate;
+import java.security.cert.X509Certificate;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
@@ -150,11 +152,16 @@ public final class SignatureDiagnostics {
         if (pkcs7 == null) {
             throw new IllegalStateException("Unable to parse PKCS7 for signature " + sigName);
         }
+        Certificate signingCert = pkcs7.getSigningCertificate();
+        if (signingCert == null) {
+            throw new IllegalStateException("Signing certificate missing in PKCS#7 Contents for " + sigName);
+        }
         if (!pkcs7.verifySignatureIntegrityAndAuthenticity()) {
             throw new IllegalStateException("PKCS7 invalid for signature " + sigName);
         }
+        String subject = extractSubject(signingCert);
 
-        return new SignatureCheckResult(sigName, filter, subFilter, true, br, pageNumber, new Rectangle(widgetRect), flags);
+        return new SignatureCheckResult(sigName, filter, subFilter, true, br, pageNumber, new Rectangle(widgetRect), flags, subject);
     }
 
     private static PdfWidgetAnnotation selectWidget(List<PdfWidgetAnnotation> widgets, PdfDocument pdf, String sigName) {
@@ -204,9 +211,11 @@ public final class SignatureDiagnostics {
         private final int pageNumber;
         private final Rectangle widgetRect;
         private final int widgetFlags;
+        private final String signingCertificateSubject;
 
         SignatureCheckResult(String name, PdfName filter, PdfName subFilter, boolean pkcs7Valid,
-                              long[] byteRange, int pageNumber, Rectangle widgetRect, int widgetFlags) {
+                              long[] byteRange, int pageNumber, Rectangle widgetRect, int widgetFlags,
+                              String signingCertificateSubject) {
             this.name = name;
             this.filter = filter;
             this.subFilter = subFilter;
@@ -215,6 +224,7 @@ public final class SignatureDiagnostics {
             this.pageNumber = pageNumber;
             this.widgetRect = widgetRect;
             this.widgetFlags = widgetFlags;
+            this.signingCertificateSubject = signingCertificateSubject;
         }
 
         public String getName() {
@@ -249,8 +259,25 @@ public final class SignatureDiagnostics {
             return widgetFlags;
         }
 
+        public String getSigningCertificateSubject() {
+            return signingCertificateSubject;
+        }
+
         public String formatByteRange() {
             return String.format("[%d, %d, %d, %d]", byteRange[0], byteRange[1], byteRange[2], byteRange[3]);
         }
+    }
+
+    private static String extractSubject(Certificate certificate) {
+        if (certificate instanceof X509Certificate) {
+            X509Certificate x509 = (X509Certificate) certificate;
+            if (x509.getSubjectX500Principal() != null) {
+                return x509.getSubjectX500Principal().getName();
+            }
+            if (x509.getSubjectDN() != null) {
+                return x509.getSubjectDN().getName();
+            }
+        }
+        return certificate.toString();
     }
 }
