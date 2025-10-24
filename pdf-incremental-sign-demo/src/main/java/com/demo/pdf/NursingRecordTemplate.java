@@ -13,6 +13,8 @@ import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfName;
 import com.itextpdf.kernel.pdf.PdfReader;
 import com.itextpdf.kernel.pdf.PdfWriter;
+import com.itextpdf.kernel.pdf.PdfVersion;
+import com.itextpdf.kernel.pdf.WriterProperties;
 import com.itextpdf.kernel.pdf.annot.PdfAnnotation;
 import com.itextpdf.layout.Document;
 import com.itextpdf.layout.borders.SolidBorder;
@@ -51,7 +53,7 @@ public class NursingRecordTemplate {
 
         ensureParentDir(dest);
 
-        try (PdfWriter writer = new PdfWriter(dest);
+        try (PdfWriter writer = new PdfWriter(dest, new WriterProperties().setPdfVersion(PdfVersion.PDF_1_7));
              PdfDocument pdf = new PdfDocument(writer);
              Document doc = new Document(pdf)) {
 
