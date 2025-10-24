@@ -17,6 +17,7 @@ public class SignatureVerifier {
         DemoKeystoreUtil.ensureProvider();
         Path pdfPath = Path.of(path);
         PdfSanityUtil.requireHeader(pdfPath);
+        PostSignValidator.strictTailCheck(pdfPath);
         try (PdfDocument pdf = new PdfDocument(new PdfReader(path))) {
             PdfAcroForm acro = PdfAcroForm.getAcroForm(pdf, false);
             if (acro == null) {

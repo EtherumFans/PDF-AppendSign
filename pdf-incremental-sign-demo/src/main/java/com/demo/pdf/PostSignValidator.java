@@ -14,8 +14,11 @@ import com.itextpdf.kernel.pdf.annot.PdfWidgetAnnotation;
 import com.itextpdf.signatures.PdfPKCS7;
 import com.itextpdf.signatures.SignatureUtil;
 
+import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 
 /**
@@ -124,5 +127,117 @@ public final class PostSignValidator {
                 throw new IllegalStateException("Widget hidden/NOVIEW.");
             }
         }
+    }
+
+    public static void strictTailCheck(Path pdf) throws IOException {
+        if (pdf == null) {
+            throw new IllegalArgumentException("PDF path must not be null");
+        }
+        byte[] all = Files.readAllBytes(pdf);
+        if (all.length < 16) {
+            throw new IllegalStateException("PDF too small.");
+        }
+
+        byte[] eofBytes = "%%EOF".getBytes(StandardCharsets.US_ASCII);
+        int eofIndex = lastIndexOf(all, eofBytes);
+        if (eofIndex < 0) {
+            throw new IllegalStateException("No %%EOF at tail.");
+        }
+
+        byte[] startxrefBytes = "startxref".getBytes(StandardCharsets.US_ASCII);
+        int startxrefIndex = lastIndexOf(all, startxrefBytes, eofIndex);
+        if (startxrefIndex < 0) {
+            throw new IllegalStateException("startxref not found before %%EOF.");
+        }
+
+        int startLineEnd = findEol(all, startxrefIndex);
+        if (startLineEnd < 0) {
+            throw new IllegalStateException("Malformed startxref (no newline).");
+        }
+        int offsetLineStart = skipEol(all, startLineEnd);
+        int offsetLineEnd = findEol(all, offsetLineStart);
+        if (offsetLineEnd < 0) {
+            throw new IllegalStateException("Malformed startxref (no number line).");
+        }
+
+        String numStr = new String(all, offsetLineStart, offsetLineEnd - offsetLineStart,
+                StandardCharsets.US_ASCII).trim();
+        long offset;
+        try {
+            offset = Long.parseLong(numStr);
+        } catch (NumberFormatException e) {
+            throw new IllegalStateException("startxref offset is not a number: '" + numStr + "'");
+        }
+
+        if (offset <= 0 || offset >= all.length) {
+            throw new IllegalStateException("startxref offset out of range: " + offset);
+        }
+
+        int probeLen = (int) Math.min(32L, all.length - offset);
+        String probe = new String(all, (int) offset, probeLen, StandardCharsets.US_ASCII);
+        if (!(probe.startsWith("xref") || probe.contains("/XRef"))) {
+            throw new IllegalStateException("startxref does not point to xref/xref-stream. Got: '" + probe + "'");
+        }
+
+        int eofEnd = eofIndex + eofBytes.length;
+        for (int i = eofEnd; i < all.length; i++) {
+            byte b = all[i];
+            if (b != '\r' && b != '\n') {
+                throw new IllegalStateException(
+                        "Extra bytes found after %%EOF at offset " + (eofIndex + eofBytes.length));
+            }
+        }
+    }
+
+    private static int lastIndexOf(byte[] haystack, byte[] needle) {
+        for (int i = haystack.length - needle.length; i >= 0; i--) {
+            if (matchesAt(haystack, needle, i)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private static int lastIndexOf(byte[] haystack, byte[] needle, int before) {
+        int start = Math.min(before, haystack.length) - needle.length;
+        for (int i = start; i >= 0; i--) {
+            if (matchesAt(haystack, needle, i)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private static boolean matchesAt(byte[] haystack, byte[] needle, int pos) {
+        if (pos < 0 || pos + needle.length > haystack.length) {
+            return false;
+        }
+        for (int i = 0; i < needle.length; i++) {
+            if (haystack[pos + i] != needle[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static int findEol(byte[] data, int from) {
+        for (int i = from; i < data.length; i++) {
+            byte b = data[i];
+            if (b == '\n' || b == '\r') {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private static int skipEol(byte[] data, int eolIndex) {
+        int i = eolIndex;
+        if (i < data.length && (data[i] == '\r' || data[i] == '\n')) {
+            byte first = data[i++];
+            if (first == '\r' && i < data.length && data[i] == '\n') {
+                i++;
+            }
+        }
+        return i;
     }
 }
