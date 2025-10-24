@@ -40,6 +40,7 @@ import java.nio.file.StandardOpenOption;
 import java.security.KeyStore;
 import java.security.PrivateKey;
 import java.security.Security;
+import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
 import java.util.Collections;
 import java.util.HashSet;
@@ -291,7 +292,6 @@ public final class NursingRecordSigner {
             appearance.setLocation(location);
             appearance.setContact(DEFAULT_CONTACT_INFO);
             Calendar signDate = Calendar.getInstance(TimeZone.getTimeZone("UTC"));
-            appearance.setSignDate(signDate);
             if (keyMaterial.x509Chain.length > 0) {
                 appearance.setCertificate(keyMaterial.x509Chain[0]);
             }
@@ -430,7 +430,7 @@ public final class NursingRecordSigner {
         signature.put(PdfName.Filter, PdfName.Adobe_PPKLite);
         signature.put(PdfName.SubFilter, PdfName.Adbe_pkcs7_detached);
         if (signDate != null) {
-            signature.put(PdfName.M, new PdfDate(signDate));
+            signature.put(PdfName.M, new PdfDate(signDate).getPdfObject());
         }
         if (signerName != null && !signerName.isBlank()) {
             signature.put(PdfName.Name, new PdfString(signerName));

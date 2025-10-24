@@ -67,7 +67,6 @@ public final class DocMDPUtil {
         appearance.setLocation(location);
         appearance.setContact(CERTIFICATION_CONTACT);
         Calendar signDate = Calendar.getInstance(SIGN_TIMEZONE);
-        appearance.setSignDate(signDate);
         appearance.setCertificate(chain[0]);
         signer.setSignDate(signDate);
         signer.setSignatureEvent(signature -> configureCertificationDictionary(signature, chain[0], reason, location, signDate));
@@ -83,9 +82,9 @@ public final class DocMDPUtil {
         }
         signature.put(PdfName.Type, PdfName.Sig);
         signature.put(PdfName.Filter, PdfName.Adobe_PPKLite);
-        signature.put(PdfName.SubFilter, PdfName.ETSI_CAdES_detached);
+        signature.put(PdfName.SubFilter, new PdfName("ETSI.CAdES.detached"));
         if (signDate != null) {
-            signature.put(PdfName.M, new PdfDate(signDate));
+            signature.put(PdfName.M, new PdfDate(signDate).getPdfObject());
         }
         if (signerCert != null) {
             signature.put(PdfName.Name, new PdfString(signerCert.getSubjectX500Principal().getName()));
