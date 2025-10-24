@@ -2,8 +2,13 @@ package com.demo.pdf;
 
 import com.demo.crypto.DemoKeystoreUtil;
 import com.itextpdf.forms.PdfAcroForm;
+import com.itextpdf.kernel.pdf.PdfArray;
+import com.itextpdf.kernel.pdf.PdfDictionary;
 import com.itextpdf.kernel.pdf.PdfDocument;
+import com.itextpdf.kernel.pdf.PdfName;
+import com.itextpdf.kernel.pdf.PdfObject;
 import com.itextpdf.kernel.pdf.PdfReader;
+import com.itextpdf.kernel.pdf.PdfString;
 import com.itextpdf.signatures.SignatureUtil;
 
 import com.itextpdf.kernel.geom.Rectangle;
@@ -57,6 +62,58 @@ public class SignatureVerifier {
                 System.out.println("     ByteRange=" + result.formatByteRange());
             }
             return 0;
+        }
+    }
+
+    static void dumpCatalogAndAcroForm(String pdf) throws Exception {
+        try (PdfDocument doc = new PdfDocument(new PdfReader(pdf))) {
+            PdfDictionary root = doc.getCatalog().getPdfObject();
+            if (root == null) {
+                System.out.println("Catalog root object missing");
+                return;
+            }
+            if (root.getIndirectReference() != null) {
+                System.out.println("Root obj#: " + root.getIndirectReference().getObjNumber());
+            } else {
+                System.out.println("Root obj#: <direct>");
+            }
+            PdfDictionary acro = root.getAsDictionary(PdfName.AcroForm);
+            if (acro == null) {
+                System.out.println("Catalog has NO /AcroForm");
+                return;
+            }
+            if (acro.getIndirectReference() != null) {
+                System.out.println("AcroForm obj#: " + acro.getIndirectReference().getObjNumber());
+            } else {
+                System.out.println("AcroForm obj#: <direct>");
+            }
+            PdfArray fields = acro.getAsArray(PdfName.Fields);
+            System.out.println("AcroForm.Fields count: " + (fields == null ? 0 : fields.size()));
+            if (fields != null) {
+                for (int i = 0; i < fields.size(); i++) {
+                    PdfDictionary f = fields.getAsDictionary(i);
+                    if (f == null) {
+                        System.out.printf("  [%d] <non-dictionary field entry>%n", i);
+                        continue;
+                    }
+                    PdfName ft = f.getAsName(PdfName.FT);
+                    PdfString t = f.getAsString(PdfName.T);
+                    if (f.getIndirectReference() != null) {
+                        System.out.printf("  [%d] FT=%s, T=%s, obj#=%d%n", i, ft, t,
+                                f.getIndirectReference().getObjNumber());
+                    } else {
+                        System.out.printf("  [%d] FT=%s, T=%s, obj#=<direct>%n", i, ft, t);
+                    }
+                    PdfObject v = f.get(PdfName.V);
+                    if (v != null && v.isDictionary()) {
+                        PdfDictionary sig = (PdfDictionary) v;
+                        System.out.printf("      /V Type=%s, Filter=%s, SubFilter=%s%n",
+                                sig.getAsName(PdfName.Type),
+                                sig.getAsName(PdfName.Filter),
+                                sig.getAsName(PdfName.SubFilter));
+                    }
+                }
+            }
         }
     }
 
