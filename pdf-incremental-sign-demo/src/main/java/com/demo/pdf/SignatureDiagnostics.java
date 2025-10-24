@@ -2,7 +2,6 @@ package com.demo.pdf;
 
 import com.itextpdf.forms.PdfAcroForm;
 import com.itextpdf.forms.fields.PdfFormField;
-import com.itextpdf.io.codec.Hex;
 import com.itextpdf.kernel.geom.Rectangle;
 import com.itextpdf.kernel.pdf.PdfArray;
 import com.itextpdf.kernel.pdf.PdfDictionary;
@@ -173,7 +172,7 @@ public final class SignatureDiagnostics {
             }
             if (contentsHex && contentsEvenLength) {
                 try {
-                    Hex.decode(contents.getValueBytes());
+                    decodeHex(contents.getValueBytes());
                     contentsDecoded = true;
                 } catch (Exception e) {
                     adobeVisibilityIssues.add("/Contents hex decode failed: " + e.getMessage());
@@ -306,6 +305,35 @@ public final class SignatureDiagnostics {
                 && Math.abs(a.getY() - b.getY()) <= RECT_TOLERANCE
                 && Math.abs(a.getWidth() - b.getWidth()) <= RECT_TOLERANCE
                 && Math.abs(a.getHeight() - b.getHeight()) <= RECT_TOLERANCE;
+    }
+
+    private static byte[] decodeHex(byte[] hexBytes) {
+        if (hexBytes == null) {
+            throw new IllegalArgumentException("hexBytes must not be null");
+        }
+        if ((hexBytes.length & 1) != 0) {
+            throw new IllegalArgumentException("Hex input length must be even");
+        }
+        byte[] result = new byte[hexBytes.length / 2];
+        for (int i = 0, j = 0; i < hexBytes.length; i += 2, j++) {
+            int high = hexValue(hexBytes[i]);
+            int low = hexValue(hexBytes[i + 1]);
+            result[j] = (byte) ((high << 4) | low);
+        }
+        return result;
+    }
+
+    private static int hexValue(byte b) {
+        if (b >= '0' && b <= '9') {
+            return b - '0';
+        }
+        if (b >= 'A' && b <= 'F') {
+            return b - 'A' + 10;
+        }
+        if (b >= 'a' && b <= 'f') {
+            return b - 'a' + 10;
+        }
+        throw new IllegalArgumentException("Invalid hex character: " + (char) b);
     }
 
     public static int extractRowIndex(String signatureName) {
