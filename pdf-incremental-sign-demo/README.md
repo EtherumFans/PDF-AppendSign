@@ -21,6 +21,19 @@ The shaded CLI is generated at
 
 ## CLI overview
 
+For day-to-day usage you can rely on the helper scripts (they wrap the correct Java command for each platform):
+
+* **macOS/Linux:** `./scripts/app.sh <command> [options]`
+* **Windows (PowerShell/CMD):** `scripts\app.cmd <command> [options]`
+
+Both scripts call the shaded JAR so you never have to remember the classpath separator. For example, the following prints the top-level help:
+
+```bash
+./scripts/app.sh --help
+```
+
+The scripts are thin wrappers around the shaded JAR. You can still invoke it manually when needed:
+
 ```bash
 java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar --help
 ```
@@ -30,6 +43,10 @@ java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.ja
 > point is the shaded JAR's manifest (`java -jar ...`). This avoids manual
 > classpath management and works on all platforms (Windows requires `;` instead
 > of `:` when using `-cp`).
+
+> If you encounter `ClassNotFoundException: com.demo.App` on Windows, it usually
+> means the command was launched with a Unix-style classpath separator (`:`).
+> Switch to the helper scripts above or replace `:` with `;`.
 
 ### `create-template`
 
