@@ -22,12 +22,14 @@ The shaded CLI is generated at
 ## CLI overview
 
 ```bash
-java -jar target/...jar app --help
+java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar --help
 ```
 
 > **Note:** Older instructions referenced the `com.demo.pdf.IncrementalSigner` main
 > class. It still works for backwards compatibility, but the recommended entry
-> point is the shaded JAR's manifest (`java -jar ...`).
+> point is the shaded JAR's manifest (`java -jar ...`). This avoids manual
+> classpath management and works on all platforms (Windows requires `;` instead
+> of `:` when using `-cp`).
 
 ### `create-template`
 
