@@ -219,13 +219,14 @@ public final class NursingRecordSigner {
             Files.createDirectories(parent);
         }
 
+        PdfDocument document = null;
         try (PdfReader reader = new PdfReader(params.getSource());
              OutputStream fos = new BufferedOutputStream(Files.newOutputStream(destPath,
                      StandardOpenOption.CREATE,
                      StandardOpenOption.TRUNCATE_EXISTING,
-                     StandardOpenOption.WRITE));
-             PdfSigner signer = new PdfSigner(reader, fos, new StampingProperties().useAppendMode())) {
-            PdfDocument document = signer.getDocument();
+                     StandardOpenOption.WRITE))) {
+            PdfSigner signer = new PdfSigner(reader, fos, new StampingProperties().useAppendMode());
+            document = signer.getDocument();
             PdfAcroForm acro = PdfAcroForm.getAcroForm(document, true);
             FormUtil.ensureNeedAppearances(acro);
             acro.setSignatureFlags(PdfAcroForm.SIGNATURE_EXIST | PdfAcroForm.APPEND_ONLY);
@@ -297,6 +298,10 @@ public final class NursingRecordSigner {
                 tsaClient = new TSAClientBouncyCastle(params.getTsaUrl());
             }
             signer.signDetached(digest, pks, keyMaterial.certificateChain, null, null, tsaClient, 0, PdfSigner.CryptoStandard.CMS);
+        } finally {
+            if (document != null && !document.isClosed()) {
+                document.close();
+            }
         }
 
         long newSize = Files.size(destPath);
@@ -330,16 +335,22 @@ public final class NursingRecordSigner {
             Files.createDirectories(parent);
         }
 
+        PdfDocument document = null;
         try (PdfReader reader = new PdfReader(src);
              OutputStream fos = new BufferedOutputStream(Files.newOutputStream(destPath,
                      StandardOpenOption.CREATE,
                      StandardOpenOption.TRUNCATE_EXISTING,
-                     StandardOpenOption.WRITE));
-             PdfSigner signer = new PdfSigner(reader, fos, new StampingProperties().useAppendMode())) {
-            if (DocMDPUtil.hasDocMDP(signer.getDocument())) {
+                     StandardOpenOption.WRITE))) {
+            PdfSigner signer = new PdfSigner(reader, fos, new StampingProperties().useAppendMode());
+            document = signer.getDocument();
+            if (DocMDPUtil.hasDocMDP(document)) {
                 throw new IllegalStateException("Document already has DocMDP certification");
             }
             DocMDPUtil.applyCertification(signer, keyMaterial.key, keyMaterial.x509Chain, DocMDPUtil.Permission.FORM_FILL_AND_SIGNATURES);
+        } finally {
+            if (document != null && !document.isClosed()) {
+                document.close();
+            }
         }
     }
 
