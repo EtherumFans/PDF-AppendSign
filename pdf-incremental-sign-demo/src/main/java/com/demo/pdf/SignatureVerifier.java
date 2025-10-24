@@ -9,6 +9,7 @@ import com.itextpdf.kernel.pdf.PdfName;
 import com.itextpdf.kernel.pdf.PdfObject;
 import com.itextpdf.kernel.pdf.PdfReader;
 import com.itextpdf.kernel.pdf.PdfString;
+import com.itextpdf.kernel.pdf.annot.PdfAnnotation;
 import com.itextpdf.signatures.SignatureUtil;
 
 import com.itextpdf.kernel.geom.Rectangle;
@@ -60,6 +61,12 @@ public class SignatureVerifier {
                         result.isPkcs7Valid());
                 System.out.println("     Signing cert subject: " + subject);
                 System.out.println("     ByteRange=" + result.formatByteRange());
+                boolean printable = (result.getWidgetFlags() & PdfAnnotation.PRINT) != 0;
+                boolean hidden = (result.getWidgetFlags() & (PdfAnnotation.INVISIBLE
+                        | PdfAnnotation.HIDDEN
+                        | PdfAnnotation.NO_VIEW
+                        | PdfAnnotation.TOGGLE_NO_VIEW)) != 0;
+                System.out.println("     Widget PRINT=" + printable + ", INVISIBLE/HIDDEN/NOVIEW=" + hidden);
             }
             return 0;
         }

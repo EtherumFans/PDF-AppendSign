@@ -3,6 +3,7 @@ package com.demo.pdf;
 import com.demo.crypto.DemoKeystoreUtil;
 import com.itextpdf.forms.PdfAcroForm;
 import com.itextpdf.forms.fields.PdfFormField;
+import com.itextpdf.forms.fields.PdfSignatureFormField;
 import com.itextpdf.forms.fields.PdfTextFormField;
 import com.itextpdf.io.font.PdfEncodings;
 import com.itextpdf.io.font.constants.StandardFonts;
@@ -12,9 +13,8 @@ import com.itextpdf.kernel.geom.Rectangle;
 import com.itextpdf.kernel.pdf.PdfArray;
 import com.itextpdf.kernel.pdf.PdfDictionary;
 import com.itextpdf.kernel.pdf.PdfDocument;
-import com.itextpdf.kernel.pdf.PdfObject;
 import com.itextpdf.kernel.pdf.PdfName;
-import com.itextpdf.kernel.pdf.PdfNumber;
+import com.itextpdf.kernel.pdf.PdfObject;
 import com.itextpdf.kernel.pdf.PdfPage;
 import com.itextpdf.kernel.pdf.PdfReader;
 import com.itextpdf.kernel.pdf.StampingProperties;
@@ -297,6 +297,7 @@ public final class NursingRecordSigner {
             if (params.getTsaUrl() != null && !params.getTsaUrl().isBlank()) {
                 tsaClient = new TSAClientBouncyCastle(params.getTsaUrl());
             }
+            assertWidgetPrintable(signatureContext.getField());
             signer.signDetached(digest, pks, keyMaterial.certificateChain, null, null, tsaClient, 0, PdfSigner.CryptoStandard.CMS);
         } finally {
             if (document != null && !document.isClosed()) {
@@ -400,88 +401,85 @@ public final class NursingRecordSigner {
 
     private static SignatureFieldContext ensureSignatureField(PdfDocument document, PdfAcroForm acro, int pageNumber,
                                                               int row, String name, SigningMode mode) {
-        PdfFormField field = acro.getField(name);
         Rectangle rect = LayoutUtil.sigRectForRow(document, pageNumber, row);
         PdfPage page = document.getPage(pageNumber);
-        if (field == null) {
+        PdfFormField existingField = acro.getField(name);
+        PdfSignatureFormField signatureField;
+        if (existingField == null) {
             if (mode != SigningMode.INJECT) {
                 throw new IllegalStateException("Signature field " + name + " not found");
             }
-            PdfFormField createdField = PdfFormField.createSignature(document, rect);
-            createdField.setFieldName(name);
-            PdfWidgetAnnotation widget = createdField.getWidgets().get(0);
-            attachWidgetToPage(page, widget, name);
-            PdfNumber flagNumber = new PdfNumber(widget.getFlags());
-            widget.getPdfObject().put(PdfName.F, flagNumber);
-            acro.addField(createdField);
-            ensureWidgetRegistered(page, widget);
-            return new SignatureFieldContext(createdField, widget, rect, pageNumber);
-        }
-        PdfName formType = field.getFormType();
-        if (formType == null) {
-            formType = field.getPdfObject().getAsName(PdfName.FT);
-        }
-        if (!PdfName.Sig.equals(formType)) {
-            throw new IllegalStateException("Field is not a signature field: " + name);
-        }
-        List<PdfWidgetAnnotation> widgets = field.getWidgets();
-        if (widgets == null || widgets.isEmpty()) {
-            throw new IllegalStateException("Signature field " + name + " has no widget annotation");
-        }
-        PdfWidgetAnnotation targetWidget = null;
-        for (PdfWidgetAnnotation widget : widgets) {
-            if (widget.getPage() == null) {
-                continue;
+            signatureField = PdfFormField.createSignature(document, rect);
+            signatureField.setFieldName(name);
+            acro.addField(signatureField, page);
+        } else {
+            if (!(existingField instanceof PdfSignatureFormField)) {
+                throw new IllegalStateException("Field is not a signature field: " + name);
             }
-            int widgetPage = document.getPageNumber(widget.getPage());
-            if (widgetPage == pageNumber) {
-                targetWidget = widget;
-                break;
-            }
+            signatureField = (PdfSignatureFormField) existingField;
         }
-        if (targetWidget == null) {
-            throw new IllegalStateException("Signature field " + name + " is not placed on page " + pageNumber);
-        }
-        attachWidgetToPage(page, targetWidget, name);
-        ensureWidgetRegistered(page, targetWidget);
-        Rectangle widgetRect = targetWidget.getRectangle().toRectangle();
-        if (widgetRect.getWidth() <= 0 || widgetRect.getHeight() <= 0) {
-            throw new IllegalStateException("Signature widget for " + name + " has invalid rectangle");
-        }
-        Rectangle expectedRect = LayoutUtil.sigRectForRow(document, pageNumber, row);
-        if (!SignatureDiagnostics.rectanglesSimilar(widgetRect, expectedRect)) {
+
+        ensurePrintableSignatureWidget(signatureField, page, rect);
+        PdfWidgetAnnotation widget = signatureField.getWidgets().get(0);
+        ensureWidgetRegistered(page, widget);
+        PdfWidgetUtil.ensureWidgetInAnnots(page, widget, name);
+
+        Rectangle normalizedRect = widget.getRectangle().toRectangle();
+        if (!SignatureDiagnostics.rectanglesSimilar(normalizedRect, rect)) {
             throw new IllegalStateException("Signature widget rectangle mismatch for " + name);
         }
-        int flags = targetWidget.getFlags();
-        if ((flags & PdfAnnotation.PRINT) == 0) {
-            throw new IllegalStateException("Signature widget " + name + " is not printable (missing PRINT flag)");
-        }
-        if ((flags & (PdfAnnotation.HIDDEN | PdfAnnotation.INVISIBLE | PdfAnnotation.TOGGLE_NO_VIEW | PdfAnnotation.NO_VIEW)) != 0) {
-            throw new IllegalStateException("Signature widget " + name + " is hidden or not viewable");
-        }
-        PdfWidgetUtil.ensureWidgetInAnnots(targetWidget.getPage(), targetWidget, name);
-        return new SignatureFieldContext(field, targetWidget, widgetRect, pageNumber);
+        return new SignatureFieldContext(signatureField, widget, new Rectangle(rect), pageNumber);
     }
 
-    private static void clearHiddenFlags(PdfWidgetAnnotation widget) {
-        widget.resetFlag(PdfAnnotation.HIDDEN);
-        widget.resetFlag(PdfAnnotation.INVISIBLE);
-        widget.resetFlag(PdfAnnotation.TOGGLE_NO_VIEW);
-        widget.resetFlag(PdfAnnotation.NO_VIEW);
-        widget.setFlag(PdfAnnotation.PRINT);
-    }
-
-    private static void attachWidgetToPage(PdfPage page, PdfWidgetAnnotation widget, String fieldName) {
+    private static void ensurePrintableSignatureWidget(PdfSignatureFormField sig,
+                                                       PdfPage page,
+                                                       Rectangle rect) {
+        if (sig == null) {
+            throw new IllegalArgumentException("Signature field must not be null");
+        }
         if (page == null) {
-            throw new IllegalStateException("Cannot attach widget for " + fieldName + " to null page");
+            throw new IllegalArgumentException("Page must not be null when normalizing signature widget");
         }
-        clearHiddenFlags(widget);
+        List<PdfWidgetAnnotation> widgets = sig.getWidgets();
+        if (widgets == null || widgets.isEmpty()) {
+            PdfWidgetAnnotation widget = new PdfWidgetAnnotation(rect);
+            widget.setPage(page);
+            sig.addKid(widget);
+            widgets = sig.getWidgets();
+        }
+
+        PdfWidgetAnnotation widget = widgets.get(0);
+        float[] rectCoords = new float[]{rect.getLeft(), rect.getBottom(), rect.getRight(), rect.getTop()};
+        widget.setRectangle(new PdfArray(rectCoords));
         widget.setPage(page);
-        PdfDictionary widgetObject = widget.getPdfObject();
-        int flags = widget.getFlags() | PdfAnnotation.PRINT;
+        widget.getPdfObject().put(PdfName.P, page.getPdfObject());
+
+        int flags = widget.getFlags();
+        flags |= PdfAnnotation.PRINT;
+        flags &= ~PdfAnnotation.INVISIBLE;
+        flags &= ~PdfAnnotation.HIDDEN;
+        flags &= ~PdfAnnotation.NO_VIEW;
+        flags &= ~PdfAnnotation.TOGGLE_NO_VIEW;
         widget.setFlags(flags);
-        widgetObject.put(PdfName.P, page.getPdfObject());
-        widgetObject.put(PdfName.F, new PdfNumber(flags));
+        widget.setHighlightMode(PdfAnnotation.HIGHLIGHT_NONE);
+    }
+
+    private static void assertWidgetPrintable(PdfSignatureFormField sig) {
+        if (sig == null) {
+            throw new IllegalArgumentException("Signature field must not be null");
+        }
+        List<PdfWidgetAnnotation> widgets = sig.getWidgets();
+        if (widgets == null || widgets.isEmpty()) {
+            throw new IllegalStateException("Signature field " + sig.getFieldName() + " has no widget annotation");
+        }
+        PdfWidgetAnnotation widget = widgets.get(0);
+        int flags = widget.getFlags();
+        if ((flags & PdfAnnotation.PRINT) == 0) {
+            throw new IllegalStateException("Signature widget " + sig.getFieldName() + " is not printable (PRINT flag missing)");
+        }
+        if ((flags & (PdfAnnotation.INVISIBLE | PdfAnnotation.HIDDEN | PdfAnnotation.NO_VIEW | PdfAnnotation.TOGGLE_NO_VIEW)) != 0) {
+            throw new IllegalStateException("Signature widget " + sig.getFieldName() + " is hidden (INVISIBLE/HIDDEN/NOVIEW)");
+        }
     }
 
     private static void ensureWidgetRegistered(PdfPage page, PdfWidgetAnnotation widget) {
@@ -580,19 +578,19 @@ public final class NursingRecordSigner {
     }
 
     private static final class SignatureFieldContext {
-        private final PdfFormField field;
+        private final PdfSignatureFormField field;
         private final PdfWidgetAnnotation widget;
         private final Rectangle rect;
         private final int pageNumber;
 
-        private SignatureFieldContext(PdfFormField field, PdfWidgetAnnotation widget, Rectangle rect, int pageNumber) {
+        private SignatureFieldContext(PdfSignatureFormField field, PdfWidgetAnnotation widget, Rectangle rect, int pageNumber) {
             this.field = field;
             this.widget = widget;
             this.rect = rect;
             this.pageNumber = pageNumber;
         }
 
-        PdfFormField getField() {
+        PdfSignatureFormField getField() {
             return field;
         }
 
