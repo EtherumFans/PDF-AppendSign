@@ -2,6 +2,7 @@ package com.demo.pdf;
 
 import com.demo.crypto.DemoKeystoreUtil;
 import com.itextpdf.forms.PdfAcroForm;
+import com.itextpdf.forms.fields.PdfFormField;
 import com.itextpdf.kernel.pdf.PdfArray;
 import com.itextpdf.kernel.pdf.PdfDictionary;
 import com.itextpdf.kernel.pdf.PdfDocument;
@@ -10,6 +11,8 @@ import com.itextpdf.kernel.pdf.PdfObject;
 import com.itextpdf.kernel.pdf.PdfReader;
 import com.itextpdf.kernel.pdf.PdfString;
 import com.itextpdf.kernel.pdf.annot.PdfAnnotation;
+import com.itextpdf.kernel.pdf.annot.PdfWidgetAnnotation;
+import com.itextpdf.kernel.pdf.PdfPage;
 import com.itextpdf.signatures.SignatureUtil;
 
 import com.itextpdf.kernel.geom.Rectangle;
@@ -51,6 +54,11 @@ public class SignatureVerifier {
                     }
                 }
 
+                PdfFormField field = acro.getField(name);
+                PdfWidgetAnnotation widget = field != null && field.getWidgets() != null && !field.getWidgets().isEmpty()
+                        ? field.getWidgets().get(0)
+                        : null;
+
                 String subject = result.getSigningCertificateSubject() != null
                         ? result.getSigningCertificateSubject()
                         : "<missing>";
@@ -67,6 +75,18 @@ public class SignatureVerifier {
                         | PdfAnnotation.NO_VIEW
                         | PdfAnnotation.TOGGLE_NO_VIEW)) != 0;
                 System.out.println("     Widget PRINT=" + printable + ", INVISIBLE/HIDDEN/NOVIEW=" + hidden);
+                if (widget != null) {
+                    PdfDictionary ap = widget.getPdfObject().getAsDictionary(PdfName.AP);
+                    PdfObject normalAppearance = ap != null ? ap.get(PdfName.N) : null;
+                    PdfPage widgetPage = widget.getPage();
+                    boolean inAnnots = isWidgetInAnnots(widgetPage, widget);
+                    System.out.println("     Widget page=" + result.getPageNumber()
+                            + ", rect=" + result.getWidgetRect()
+                            + ", AP(N)=" + (normalAppearance != null)
+                            + ", inAnnots=" + inAnnots);
+                } else {
+                    System.out.println("     Widget details unavailable (field missing widget)");
+                }
             }
             return 0;
         }
@@ -131,5 +151,30 @@ public class SignatureVerifier {
         }
         int code = verify(args[0]);
         System.exit(code);
+    }
+
+    private static boolean isWidgetInAnnots(PdfPage page, PdfWidgetAnnotation widget) {
+        if (page == null || widget == null) {
+            return false;
+        }
+        PdfArray annots = page.getPdfObject().getAsArray(PdfName.Annots);
+        if (annots == null) {
+            return false;
+        }
+        PdfDictionary widgetObject = widget.getPdfObject();
+        for (int i = 0; i < annots.size(); i++) {
+            PdfObject candidate = annots.get(i);
+            if (candidate == null) {
+                continue;
+            }
+            if (candidate.getIndirectReference() != null && widgetObject.getIndirectReference() != null
+                    && candidate.getIndirectReference().equals(widgetObject.getIndirectReference())) {
+                return true;
+            }
+            if (candidate.equals(widgetObject)) {
+                return true;
+            }
+        }
+        return false;
     }
 }

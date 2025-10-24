@@ -10,11 +10,8 @@ import com.itextpdf.io.font.constants.StandardFonts;
 import com.itextpdf.kernel.font.PdfFont;
 import com.itextpdf.kernel.font.PdfFontFactory;
 import com.itextpdf.kernel.geom.Rectangle;
-import com.itextpdf.kernel.pdf.PdfArray;
-import com.itextpdf.kernel.pdf.PdfDictionary;
 import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfName;
-import com.itextpdf.kernel.pdf.PdfObject;
 import com.itextpdf.kernel.pdf.PdfPage;
 import com.itextpdf.kernel.pdf.PdfReader;
 import com.itextpdf.kernel.pdf.StampingProperties;
@@ -419,9 +416,7 @@ public final class NursingRecordSigner {
             signatureField = (PdfSignatureFormField) existingField;
         }
 
-        ensurePrintableSignatureWidget(signatureField, page, rect);
-        PdfWidgetAnnotation widget = signatureField.getWidgets().get(0);
-        ensureWidgetRegistered(page, widget);
+        PdfWidgetAnnotation widget = FormUtil.ensurePrintableSignatureWidget(signatureField, page, rect);
         PdfWidgetUtil.ensureWidgetInAnnots(page, widget, name);
 
         Rectangle normalizedRect = widget.getRectangle().toRectangle();
@@ -429,39 +424,6 @@ public final class NursingRecordSigner {
             throw new IllegalStateException("Signature widget rectangle mismatch for " + name);
         }
         return new SignatureFieldContext(signatureField, widget, new Rectangle(rect), pageNumber);
-    }
-
-    private static void ensurePrintableSignatureWidget(PdfSignatureFormField sig,
-                                                       PdfPage page,
-                                                       Rectangle rect) {
-        if (sig == null) {
-            throw new IllegalArgumentException("Signature field must not be null");
-        }
-        if (page == null) {
-            throw new IllegalArgumentException("Page must not be null when normalizing signature widget");
-        }
-        List<PdfWidgetAnnotation> widgets = sig.getWidgets();
-        if (widgets == null || widgets.isEmpty()) {
-            PdfWidgetAnnotation widget = new PdfWidgetAnnotation(rect);
-            widget.setPage(page);
-            sig.addKid(widget);
-            widgets = sig.getWidgets();
-        }
-
-        PdfWidgetAnnotation widget = widgets.get(0);
-        float[] rectCoords = new float[]{rect.getLeft(), rect.getBottom(), rect.getRight(), rect.getTop()};
-        widget.setRectangle(new PdfArray(rectCoords));
-        widget.setPage(page);
-        widget.getPdfObject().put(PdfName.P, page.getPdfObject());
-
-        int flags = widget.getFlags();
-        flags |= PdfAnnotation.PRINT;
-        flags &= ~PdfAnnotation.INVISIBLE;
-        flags &= ~PdfAnnotation.HIDDEN;
-        flags &= ~PdfAnnotation.NO_VIEW;
-        flags &= ~PdfAnnotation.TOGGLE_NO_VIEW;
-        widget.setFlags(flags);
-        widget.setHighlightMode(PdfAnnotation.HIGHLIGHT_NONE);
     }
 
     private static void assertWidgetPrintable(PdfSignatureFormField sig) {
@@ -480,36 +442,6 @@ public final class NursingRecordSigner {
         if ((flags & (PdfAnnotation.INVISIBLE | PdfAnnotation.HIDDEN | PdfAnnotation.NO_VIEW | PdfAnnotation.TOGGLE_NO_VIEW)) != 0) {
             throw new IllegalStateException("Signature widget " + sig.getFieldName() + " is hidden (INVISIBLE/HIDDEN/NOVIEW)");
         }
-    }
-
-    private static void ensureWidgetRegistered(PdfPage page, PdfWidgetAnnotation widget) {
-        PdfDictionary pageObject = page.getPdfObject();
-        PdfArray annots = pageObject.getAsArray(PdfName.Annots);
-        if (annots == null) {
-            annots = new PdfArray();
-            pageObject.put(PdfName.Annots, annots);
-        }
-        PdfDictionary widgetObject = widget.getPdfObject();
-        if (!containsAnnotationReference(annots, widgetObject)) {
-            annots.add(widgetObject);
-        }
-    }
-
-    private static boolean containsAnnotationReference(PdfArray annots, PdfDictionary widgetObject) {
-        for (int i = 0; i < annots.size(); i++) {
-            PdfObject candidate = annots.get(i);
-            if (candidate == null) {
-                continue;
-            }
-            if (candidate.getIndirectReference() != null && widgetObject.getIndirectReference() != null
-                    && candidate.getIndirectReference().equals(widgetObject.getIndirectReference())) {
-                return true;
-            }
-            if (candidate.equals(widgetObject)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private static PdfFont resolveAppearanceFont() {

@@ -7,6 +7,7 @@ import com.itextpdf.kernel.pdf.PdfDictionary;
 import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfName;
 import com.itextpdf.kernel.pdf.PdfNumber;
+import com.itextpdf.kernel.pdf.PdfObject;
 import com.itextpdf.kernel.pdf.PdfReader;
 import com.itextpdf.kernel.pdf.PdfString;
 import com.itextpdf.kernel.pdf.annot.PdfAnnotation;
@@ -113,19 +114,37 @@ public final class PostSignValidator {
             if (widgets == null || widgets.isEmpty()) {
                 throw new IllegalStateException("Signature field has no widget.");
             }
-            PdfWidgetAnnotation w = widgets.get(0);
-            if (w.getPage() == null) {
-                throw new IllegalStateException("Widget not attached to any page.");
-            }
-            PdfWidgetUtil.ensureWidgetInAnnots(w.getPage(), w, fname);
-            PdfNumber flagNumber = w.getPdfObject().getAsNumber(PdfName.F);
-            int flags = flagNumber != null ? flagNumber.intValue() : w.getFlags();
-            if ((flags & PdfAnnotation.PRINT) == 0) {
-                throw new IllegalStateException("Widget missing PRINT flag.");
-            }
-            if ((flags & (PdfAnnotation.HIDDEN | PdfAnnotation.NO_VIEW | PdfAnnotation.INVISIBLE | PdfAnnotation.TOGGLE_NO_VIEW)) != 0) {
-                throw new IllegalStateException("Widget hidden/NOVIEW.");
-            }
+            PdfWidgetAnnotation widget = widgets.get(0);
+            assertWidgetVisibleAndPrintable(widget, fname);
+            PdfWidgetUtil.ensureWidgetInAnnots(widget.getPage(), widget, fname);
+        }
+    }
+
+    private static void assertWidgetVisibleAndPrintable(PdfWidgetAnnotation widget, String fieldName) {
+        if (widget.getPage() == null) {
+            throw new IllegalStateException("Signature widget " + fieldName + " is not attached to any page");
+        }
+        PdfDictionary widgetDict = widget.getPdfObject();
+        if (widgetDict.getAsDictionary(PdfName.P) == null) {
+            throw new IllegalStateException("Signature widget " + fieldName + " is missing /P reference");
+        }
+        PdfArray rect = widgetDict.getAsArray(PdfName.Rect);
+        if (rect == null || rect.size() != 4) {
+            throw new IllegalStateException("Signature widget " + fieldName + " has invalid /Rect");
+        }
+        PdfDictionary ap = widgetDict.getAsDictionary(PdfName.AP);
+        PdfObject normalAppearance = ap != null ? ap.get(PdfName.N) : null;
+        if (normalAppearance == null) {
+            throw new IllegalStateException("Signature widget " + fieldName + " has no normal appearance (/AP.N)");
+        }
+
+        PdfNumber flagNumber = widgetDict.getAsNumber(PdfName.F);
+        int flags = flagNumber != null ? flagNumber.intValue() : widget.getFlags();
+        if ((flags & PdfAnnotation.PRINT) == 0) {
+            throw new IllegalStateException("Signature widget " + fieldName + " is not printable (PRINT flag missing)");
+        }
+        if ((flags & (PdfAnnotation.HIDDEN | PdfAnnotation.NO_VIEW | PdfAnnotation.INVISIBLE | PdfAnnotation.TOGGLE_NO_VIEW)) != 0) {
+            throw new IllegalStateException("Signature widget " + fieldName + " is hidden or NOVIEW");
         }
     }
 
