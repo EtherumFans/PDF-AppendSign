@@ -72,7 +72,7 @@ public class SignatureVerifier {
         }
     }
 
-    static void dumpCatalogAndAcroForm(String pdf) throws Exception {
+    private static void dumpCatalogAndAcroForm(String pdf) throws Exception {
         try (PdfDocument doc = new PdfDocument(new PdfReader(pdf))) {
             PdfDictionary root = doc.getCatalog().getPdfObject();
             if (root == null) {
@@ -126,9 +126,17 @@ public class SignatureVerifier {
 
     public static void main(String[] args) throws Exception {
         if (args.length == 0) {
-            System.err.println("Usage: java ... SignatureVerifier <pdf>");
+            System.err.println("Usage:");
+            System.err.println("  java ... SignatureVerifier <pdf>");
+            System.err.println("  java ... SignatureVerifier dump-acroform <pdf>");
             System.exit(2);
         }
+
+        if (args.length == 2 && "dump-acroform".equals(args[0])) {
+            dumpCatalogAndAcroForm(args[1]);
+            return;
+        }
+
         int code = verify(args[0]);
         System.exit(code);
     }
