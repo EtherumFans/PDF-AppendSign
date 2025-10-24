@@ -32,9 +32,11 @@ import com.itextpdf.signatures.TSAClientBouncyCastle;
 import com.itextpdf.forms.PdfSigFieldLock;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 
-import java.io.FileOutputStream;
+import java.io.BufferedOutputStream;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.security.KeyStore;
 import java.security.PrivateKey;
 import java.security.Security;
@@ -212,9 +214,17 @@ public final class NursingRecordSigner {
 
         SignatureFieldContext signatureContext = null;
 
+        Path parent = destPath.toAbsolutePath().getParent();
+        if (parent != null) {
+            Files.createDirectories(parent);
+        }
+
         try (PdfReader reader = new PdfReader(params.getSource());
-             FileOutputStream fos = new FileOutputStream(params.getDestination())) {
-            PdfSigner signer = new PdfSigner(reader, fos, new StampingProperties().useAppendMode());
+             OutputStream fos = new BufferedOutputStream(Files.newOutputStream(destPath,
+                     StandardOpenOption.CREATE,
+                     StandardOpenOption.TRUNCATE_EXISTING,
+                     StandardOpenOption.WRITE));
+             PdfSigner signer = new PdfSigner(reader, fos, new StampingProperties().useAppendMode())) {
             PdfDocument document = signer.getDocument();
             PdfAcroForm acro = PdfAcroForm.getAcroForm(document, true);
             FormUtil.ensureNeedAppearances(acro);
@@ -299,6 +309,7 @@ public final class NursingRecordSigner {
         }
 
         PostSignValidator.validate(destPath.toString(), sigName);
+        PostSignValidator.strictTailCheck(destPath);
         validateSignedOutput(destPath, sigName, initialSignatureCount,
                 signatureContext.getPageNumber(), new Rectangle(signatureContext.getRect()));
         System.out.println("[sign-row] Signature applied in append mode");
@@ -313,9 +324,18 @@ public final class NursingRecordSigner {
         }
         KeyMaterial keyMaterial = loadKeyMaterial(pkcs12, pwd);
 
+        Path destPath = Path.of(dest);
+        Path parent = destPath.toAbsolutePath().getParent();
+        if (parent != null) {
+            Files.createDirectories(parent);
+        }
+
         try (PdfReader reader = new PdfReader(src);
-             FileOutputStream fos = new FileOutputStream(dest)) {
-            PdfSigner signer = new PdfSigner(reader, fos, new StampingProperties().useAppendMode());
+             OutputStream fos = new BufferedOutputStream(Files.newOutputStream(destPath,
+                     StandardOpenOption.CREATE,
+                     StandardOpenOption.TRUNCATE_EXISTING,
+                     StandardOpenOption.WRITE));
+             PdfSigner signer = new PdfSigner(reader, fos, new StampingProperties().useAppendMode())) {
             if (DocMDPUtil.hasDocMDP(signer.getDocument())) {
                 throw new IllegalStateException("Document already has DocMDP certification");
             }
