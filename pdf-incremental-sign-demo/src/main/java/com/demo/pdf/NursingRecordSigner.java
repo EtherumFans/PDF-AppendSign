@@ -10,10 +10,12 @@ import com.itextpdf.io.font.constants.StandardFonts;
 import com.itextpdf.kernel.font.PdfFont;
 import com.itextpdf.kernel.font.PdfFontFactory;
 import com.itextpdf.kernel.geom.Rectangle;
+import com.itextpdf.kernel.pdf.PdfDate;
 import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfName;
 import com.itextpdf.kernel.pdf.PdfPage;
 import com.itextpdf.kernel.pdf.PdfReader;
+import com.itextpdf.kernel.pdf.PdfString;
 import com.itextpdf.kernel.pdf.StampingProperties;
 import com.itextpdf.kernel.pdf.annot.PdfAnnotation;
 import com.itextpdf.kernel.pdf.annot.PdfWidgetAnnotation;
@@ -25,6 +27,7 @@ import com.itextpdf.signatures.PdfSignatureAppearance;
 import com.itextpdf.signatures.PdfSigner;
 import com.itextpdf.signatures.PrivateKeySignature;
 import com.itextpdf.signatures.SignatureUtil;
+import com.itextpdf.signatures.PdfSignature;
 import com.itextpdf.signatures.TSAClientBouncyCastle;
 import com.itextpdf.forms.PdfSigFieldLock;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
@@ -37,15 +40,19 @@ import java.nio.file.StandardOpenOption;
 import java.security.KeyStore;
 import java.security.PrivateKey;
 import java.security.Security;
-import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.Calendar;
+import java.util.TimeZone;
 
 public final class NursingRecordSigner {
+
+    private static final String DEFAULT_CONTACT_INFO = "nurse-signer@example.com";
+    private static final String DEFAULT_LOCATION = "Ward A";
 
     private NursingRecordSigner() {
     }
@@ -190,6 +197,7 @@ public final class NursingRecordSigner {
         long originalSize = Files.size(srcPath);
 
         PdfSanityUtil.requireHeader(srcPath);
+        PdfSanityUtil.requireVersionAtLeast(srcPath, "1.6");
 
         List<String> baselineNames;
         try (PdfReader baselineReader = new PdfReader(params.getSource());
@@ -274,13 +282,27 @@ public final class NursingRecordSigner {
             appearance.setReuseAppearance(false);
             appearance.setPageNumber(signatureContext.getPageNumber());
             appearance.setPageRect(signatureContext.getRect());
-            appearance.setReason("Nursing note " + params.getTimeValue());
-            appearance.setLocation("Ward A");
-            String layer2 = String.format("护士: %s\n时间: %s\n事由: Nursing note %s",
-                    params.getNurse(), params.getTimeValue(), params.getTimeValue());
+            String signerName = params.getNurse() == null || params.getNurse().isBlank()
+                    ? "Signer"
+                    : params.getNurse();
+            String reason = "Nursing note " + params.getTimeValue();
+            String location = DEFAULT_LOCATION;
+            appearance.setReason(reason);
+            appearance.setLocation(location);
+            appearance.setContact(DEFAULT_CONTACT_INFO);
+            Calendar signDate = Calendar.getInstance(TimeZone.getTimeZone("UTC"));
+            appearance.setSignDate(signDate);
+            if (keyMaterial.x509Chain.length > 0) {
+                appearance.setCertificate(keyMaterial.x509Chain[0]);
+            }
+            String layer2 = String.format("护士: %s\n时间: %s\n事由: %s",
+                    signerName, params.getTimeValue(), reason);
             PdfFont font = resolveAppearanceFont();
             appearance.setLayer2Font(font);
             appearance.setLayer2Text(layer2);
+
+            signer.setSignDate(signDate);
+            signer.setSignatureEvent(signature -> configureSignatureDictionary(signature, signerName, reason, location, signDate));
 
             if (keyMaterial.x509Chain.length > 0) {
                 System.out.println("[sign-row] Signer cert subject: "
@@ -295,7 +317,7 @@ public final class NursingRecordSigner {
                 tsaClient = new TSAClientBouncyCastle(params.getTsaUrl());
             }
             assertWidgetPrintable(signatureContext.getField());
-            signer.signDetached(digest, pks, keyMaterial.certificateChain, null, null, tsaClient, 0, PdfSigner.CryptoStandard.CMS);
+            signer.signDetached(digest, pks, keyMaterial.x509Chain, null, null, tsaClient, 0, PdfSigner.CryptoStandard.CMS);
         } finally {
             if (document != null && !document.isClosed()) {
                 document.close();
@@ -327,6 +349,9 @@ public final class NursingRecordSigner {
         }
         KeyMaterial keyMaterial = loadKeyMaterial(pkcs12, pwd);
 
+        Path srcPath = Path.of(src);
+        PdfSanityUtil.requireHeader(srcPath);
+        PdfSanityUtil.requireVersionAtLeast(srcPath, "1.6");
         Path destPath = Path.of(dest);
         Path parent = destPath.toAbsolutePath().getParent();
         if (parent != null) {
@@ -394,6 +419,29 @@ public final class NursingRecordSigner {
             textField.setMultiline(true);
         }
         return textField;
+    }
+
+    private static void configureSignatureDictionary(PdfSignature signature, String signerName,
+                                                     String reason, String location, Calendar signDate) {
+        if (signature == null) {
+            return;
+        }
+        signature.put(PdfName.Type, PdfName.Sig);
+        signature.put(PdfName.Filter, PdfName.Adobe_PPKLite);
+        signature.put(PdfName.SubFilter, PdfName.Adbe_pkcs7_detached);
+        if (signDate != null) {
+            signature.put(PdfName.M, new PdfDate(signDate));
+        }
+        if (signerName != null && !signerName.isBlank()) {
+            signature.put(PdfName.Name, new PdfString(signerName));
+        }
+        if (reason != null && !reason.isBlank()) {
+            signature.put(PdfName.Reason, new PdfString(reason));
+        }
+        if (location != null && !location.isBlank()) {
+            signature.put(PdfName.Location, new PdfString(location));
+        }
+        signature.put(PdfName.ContactInfo, new PdfString(DEFAULT_CONTACT_INFO));
     }
 
     private static SignatureFieldContext ensureSignatureField(PdfDocument document, PdfAcroForm acro, int pageNumber,
@@ -483,6 +531,9 @@ public final class NursingRecordSigner {
         if (key == null) {
             throw new IllegalStateException("PrivateKey is null for alias: " + alias);
         }
+        if (!"RSA".equalsIgnoreCase(key.getAlgorithm())) {
+            throw new IllegalStateException("Signing key algorithm must be RSA for Adobe compatibility; got: " + key.getAlgorithm());
+        }
         Certificate[] chain = ks.getCertificateChain(alias);
         if (chain == null || chain.length == 0) {
             throw new IllegalStateException("Certificate chain is empty (cannot embed signer cert).");
@@ -493,18 +544,24 @@ public final class NursingRecordSigner {
                 throw new IllegalStateException("Certificate chain entry is not X509Certificate: index " + i);
             }
             x509Chain[i] = (X509Certificate) chain[i];
+            if (x509Chain[i].getVersion() < 3) {
+                throw new IllegalStateException("Certificate " + x509Chain[i].getSubjectX500Principal() + " is not X.509 v3");
+            }
         }
-        return new KeyMaterial(key, chain.clone(), x509Chain);
+        String sigAlg = x509Chain[0].getSigAlgName();
+        String normalizedAlg = sigAlg != null ? sigAlg.toUpperCase(Locale.ROOT) : "";
+        if (!normalizedAlg.contains("SHA256") || !normalizedAlg.contains("RSA")) {
+            throw new IllegalStateException("Signing certificate must use SHA256withRSA; got: " + sigAlg);
+        }
+        return new KeyMaterial(key, x509Chain);
     }
 
     private static final class KeyMaterial {
         private final PrivateKey key;
-        private final Certificate[] certificateChain;
         private final X509Certificate[] x509Chain;
 
-        private KeyMaterial(PrivateKey key, Certificate[] certificateChain, X509Certificate[] x509Chain) {
+        private KeyMaterial(PrivateKey key, X509Certificate[] x509Chain) {
             this.key = key;
-            this.certificateChain = certificateChain;
             this.x509Chain = x509Chain;
         }
     }
