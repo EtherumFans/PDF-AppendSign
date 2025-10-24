@@ -157,7 +157,7 @@ public final class SignatureDiagnostics {
         boolean contentsHex = false;
         boolean contentsEvenLength = false;
         boolean contentsDecoded = false;
-        int contentsHexLength = 0;
+        long contentsHexLength = -1L;
         if (contents == null) {
             adobeVisibilityIssues.add("/Contents missing");
         } else {
@@ -165,25 +165,37 @@ public final class SignatureDiagnostics {
             if (!contentsHex) {
                 adobeVisibilityIssues.add("/Contents not stored as hex");
             }
-            contentsHexLength = contents.getValueBytes().length;
-            contentsEvenLength = (contentsHexLength & 1) == 0;
-            if (!contentsEvenLength) {
-                adobeVisibilityIssues.add("/Contents hex length must be even");
+            byte[] valueBytes = null;
+            try {
+                valueBytes = contents.getValueBytes();
+                contentsDecoded = true;
+            } catch (Exception e) {
+                adobeVisibilityIssues.add("/Contents decode failed: " + e.getMessage());
             }
-            if (contentsHex && contentsEvenLength) {
-                try {
-                    decodeHex(contents.getValueBytes());
-                    contentsDecoded = true;
-                } catch (Exception e) {
-                    adobeVisibilityIssues.add("/Contents hex decode failed: " + e.getMessage());
+            if (valueBytes != null) {
+                if (contentsHex) {
+                    contentsHexLength = (long) valueBytes.length * 2L;
+                } else {
+                    contentsHexLength = valueBytes.length;
+                }
+                contentsEvenLength = (contentsHexLength & 1L) == 0L;
+                if (contentsHex && !contentsEvenLength) {
+                    adobeVisibilityIssues.add("/Contents hex length must be even");
                 }
             }
         }
 
-        if (byteRangeNumbersOk && contents != null && br != null) {
-            long contentsOccupy = contentsHexLength;
-            boolean coverageLengthMatch = br[1] + br[3] + contentsOccupy == fileLength;
-            boolean gapMatch = br[2] == br[1] + contentsOccupy;
+        long byteRangeGap = -1L;
+        if (byteRangeNumbersOk && br != null) {
+            byteRangeGap = br[2] - (br[0] + br[1]);
+        }
+
+        if (byteRangeNumbersOk && contents != null && br != null && byteRangeGap >= 0L) {
+            boolean coverageLengthMatch = br[1] + br[3] + byteRangeGap == fileLength;
+            long expectedGap = contentsDecoded && contentsHexLength >= 0L
+                    ? contentsHexLength + 2L
+                    : -1L;
+            boolean gapMatch = expectedGap >= 0L && byteRangeGap == expectedGap;
             byteRangeCoverageOk = coverageLengthMatch && gapMatch;
             if (!coverageLengthMatch) {
                 adobeVisibilityIssues.add("/ByteRange segments + /Contents length != file length");
@@ -307,35 +319,6 @@ public final class SignatureDiagnostics {
                 && Math.abs(a.getHeight() - b.getHeight()) <= RECT_TOLERANCE;
     }
 
-    private static byte[] decodeHex(byte[] hexBytes) {
-        if (hexBytes == null) {
-            throw new IllegalArgumentException("hexBytes must not be null");
-        }
-        if ((hexBytes.length & 1) != 0) {
-            throw new IllegalArgumentException("Hex input length must be even");
-        }
-        byte[] result = new byte[hexBytes.length / 2];
-        for (int i = 0, j = 0; i < hexBytes.length; i += 2, j++) {
-            int high = hexValue(hexBytes[i]);
-            int low = hexValue(hexBytes[i + 1]);
-            result[j] = (byte) ((high << 4) | low);
-        }
-        return result;
-    }
-
-    private static int hexValue(byte b) {
-        if (b >= '0' && b <= '9') {
-            return b - '0';
-        }
-        if (b >= 'A' && b <= 'F') {
-            return b - 'A' + 10;
-        }
-        if (b >= 'a' && b <= 'f') {
-            return b - 'a' + 10;
-        }
-        throw new IllegalArgumentException("Invalid hex character: " + (char) b);
-    }
-
     public static int extractRowIndex(String signatureName) {
         if (signatureName == null) {
             return -1;
@@ -366,7 +349,7 @@ public final class SignatureDiagnostics {
         private final boolean contentsHex;
         private final boolean contentsEvenLength;
         private final boolean contentsDecoded;
-        private final int contentsHexLength;
+        private final long contentsHexLength;
         private final boolean adobeVisibleMinimal;
         private final List<String> adobeVisibilityIssues;
         private final int pageNumber;
@@ -382,7 +365,7 @@ public final class SignatureDiagnostics {
                               boolean pkcs7Parsed, boolean pkcs7Valid, String pkcs7Error,
                               long[] byteRange, boolean byteRangeShapeOk, boolean byteRangeOffsetsOk,
                               boolean byteRangeCoverageOk, boolean contentsHex, boolean contentsEvenLength,
-                              boolean contentsDecoded, int contentsHexLength, boolean adobeVisibleMinimal,
+                              boolean contentsDecoded, long contentsHexLength, boolean adobeVisibleMinimal,
                               List<String> adobeVisibilityIssues, int pageNumber, Rectangle widgetRect,
                               int widgetFlags, boolean widgetPrintable, boolean widgetHidden,
                               boolean widgetInAnnots, boolean widgetHasAppearance, String signingCertificateSubject) {
@@ -469,7 +452,7 @@ public final class SignatureDiagnostics {
             return contentsDecoded;
         }
 
-        public int getContentsHexLength() {
+        public long getContentsHexLength() {
             return contentsHexLength;
         }
 
