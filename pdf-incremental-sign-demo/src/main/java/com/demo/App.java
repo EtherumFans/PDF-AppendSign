@@ -5,6 +5,7 @@ import com.demo.pdf.NursingRecordSigner;
 import com.demo.pdf.NursingRecordTemplate;
 import com.demo.pdf.PdfStructureDebugger;
 import com.demo.pdf.SignatureVerifier;
+import com.demo.pdf.SignatureWidgetRepairer;
 import picocli.CommandLine;
 
 import java.nio.file.Files;
@@ -24,6 +25,7 @@ public class App {
                     SignRow.class,
                     VerifyPdf.class,
                     DebugStructure.class,
+                    FixWidgets.class,
                     Certify.class,
                     GenDemoP12.class
             })
@@ -187,6 +189,27 @@ public class App {
             String certPath = cert != null ? cert.toAbsolutePath().toString() : null;
             NursingRecordSigner.certifyDocument(source.toAbsolutePath().toString(), destination.toAbsolutePath().toString(), certPath, password);
             System.out.println("[certify] Certification applied -> " + destination.toAbsolutePath());
+            return 0;
+        }
+    }
+
+    @CommandLine.Command(name = "fix-widgets", description = "Repair signature widget flags and appearance in append mode")
+    static class FixWidgets implements Callable<Integer> {
+
+        @CommandLine.Option(names = "--pdf", required = true, description = "Source PDF with hidden signatures")
+        private Path source;
+
+        @CommandLine.Option(names = "--dest", required = true, description = "Destination PDF with repaired widgets")
+        private Path destination;
+
+        @Override
+        public Integer call() throws Exception {
+            if (source.equals(destination)) {
+                throw new CommandLine.ParameterException(new CommandLine(this),
+                        "Source and destination must differ to preserve the original revision");
+            }
+            SignatureWidgetRepairer.repair(source.toAbsolutePath(), destination.toAbsolutePath());
+            System.out.println("[fix-widgets] Repaired widgets -> " + destination.toAbsolutePath());
             return 0;
         }
     }
