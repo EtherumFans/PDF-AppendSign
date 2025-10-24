@@ -2,12 +2,14 @@ package com.demo.pdf;
 
 import com.itextpdf.forms.PdfAcroForm;
 import com.itextpdf.forms.fields.PdfFormField;
+import com.itextpdf.io.codec.Hex;
 import com.itextpdf.kernel.geom.Rectangle;
 import com.itextpdf.kernel.pdf.PdfArray;
 import com.itextpdf.kernel.pdf.PdfDictionary;
 import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfName;
 import com.itextpdf.kernel.pdf.PdfNumber;
+import com.itextpdf.kernel.pdf.PdfObject;
 import com.itextpdf.kernel.pdf.PdfPage;
 import com.itextpdf.kernel.pdf.PdfString;
 import com.itextpdf.kernel.pdf.annot.PdfAnnotation;
@@ -19,7 +21,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
@@ -57,34 +61,31 @@ public final class SignatureDiagnostics {
             throw new IllegalStateException("AcroForm is missing signature field " + sigName);
         }
 
-        List<PdfWidgetAnnotation> widgets = field.getWidgets();
-        if (widgets == null || widgets.isEmpty()) {
-            throw new IllegalStateException("Signature field " + sigName + " has no widget annotations");
-        }
+        PdfWidgetAnnotation widget = selectWidget(field.getWidgets());
+        PdfPage widgetPage = widget != null ? widget.getPage() : null;
+        int pageNumber = widgetPage != null ? pdf.getPageNumber(widgetPage) : -1;
 
-        PdfWidgetAnnotation widget = selectWidget(widgets, pdf, sigName);
-        PdfPage widgetPage = widget.getPage();
-        if (widgetPage == null) {
-            throw new IllegalStateException("Signature widget for " + sigName + " has no page reference");
-        }
-        int pageNumber = pdf.getPageNumber(widgetPage);
-        if (pageNumber < 1) {
-            throw new IllegalStateException("Signature widget for " + sigName + " has invalid page index: " + pageNumber);
-        }
+        Rectangle widgetRect = null;
+        int flags = 0;
+        boolean widgetPrintable = false;
+        boolean widgetHidden = false;
+        boolean widgetInAnnots = false;
+        boolean widgetHasAppearance = false;
 
-        PdfWidgetUtil.ensureWidgetInAnnots(widgetPage, widget, sigName);
-
-        Rectangle widgetRect = widget.getRectangle().toRectangle();
-        if (widgetRect.getWidth() <= 0 || widgetRect.getHeight() <= 0) {
-            throw new IllegalStateException("Signature widget for " + sigName + " has invalid rectangle");
-        }
-
-        int flags = widget.getFlags();
-        if ((flags & PdfAnnotation.PRINT) == 0) {
-            throw new IllegalStateException("Signature widget " + sigName + " is not printable (missing PRINT flag)");
-        }
-        if ((flags & (PdfAnnotation.HIDDEN | PdfAnnotation.INVISIBLE | PdfAnnotation.TOGGLE_NO_VIEW | PdfAnnotation.NO_VIEW)) != 0) {
-            throw new IllegalStateException("Signature widget " + sigName + " is hidden or not viewable");
+        if (widget != null) {
+            if (widget.getRectangle() != null) {
+                widgetRect = widget.getRectangle().toRectangle();
+            }
+            flags = widget.getFlags();
+            widgetPrintable = (flags & PdfAnnotation.PRINT) != 0;
+            widgetHidden = (flags & (PdfAnnotation.INVISIBLE | PdfAnnotation.HIDDEN
+                    | PdfAnnotation.NO_VIEW | PdfAnnotation.TOGGLE_NO_VIEW)) != 0;
+            if (widgetPage != null) {
+                widgetInAnnots = isWidgetInAnnots(widgetPage, widget);
+            }
+            PdfDictionary ap = widget.getPdfObject().getAsDictionary(PdfName.AP);
+            PdfObject normalAppearance = ap != null ? ap.get(PdfName.N) : null;
+            widgetHasAppearance = normalAppearance != null;
         }
 
         PdfDictionary fieldDict = field.getPdfObject();
@@ -100,81 +101,201 @@ public final class SignatureDiagnostics {
         }
 
         PdfName filter = sigDict.getAsName(PdfName.Filter);
-        if (filter == null || !PdfName.Adobe_PPKLite.equals(filter)) {
-            String actual = filter != null ? "/" + filter.getValue() : "null";
-            throw new IllegalStateException("Signature Filter is not /Adobe.PPKLite for " + sigName + ": " + actual);
-        }
-
         PdfName subFilter = sigDict.getAsName(PdfName.SubFilter);
-        if (subFilter == null || !ALLOWED_SUBFILTERS.contains(subFilter)) {
-            String actual = subFilter != null ? "/" + subFilter.getValue() : "null";
-            throw new IllegalStateException("Signature SubFilter not CMS/CAdES for " + sigName + ": " + actual);
+
+        List<String> adobeVisibilityIssues = new ArrayList<>();
+
+        boolean filterAllowed = true;
+        if (!PdfName.Adobe_PPKLite.equals(filter)) {
+            filterAllowed = false;
+            adobeVisibilityIssues.add("Filter is not /Adobe.PPKLite");
+        }
+        if (!ALLOWED_SUBFILTERS.contains(subFilter)) {
+            filterAllowed = false;
+            adobeVisibilityIssues.add("SubFilter not in CMS/CAdES whitelist");
         }
 
         PdfArray byteRange = sigDict.getAsArray(PdfName.ByteRange);
-        if (byteRange == null || byteRange.size() != 4) {
-            throw new IllegalStateException("Invalid /ByteRange for signature " + sigName + ": " + byteRange);
-        }
-        long[] br = new long[4];
-        for (int i = 0; i < 4; i++) {
-            PdfNumber num = byteRange.getAsNumber(i);
-            if (num == null) {
-                throw new IllegalStateException("/ByteRange element " + i + " missing for signature " + sigName);
-            }
-            br[i] = num.longValue();
-        }
-        if (br[0] != 0L) {
-            throw new IllegalStateException("/ByteRange must start at 0 for signature " + sigName + ": " + byteRange);
-        }
-        if (br[1] < 0 || br[2] < 0 || br[3] < 0) {
-            throw new IllegalStateException("Negative value in /ByteRange for signature " + sigName + ": " + byteRange);
-        }
+        long[] br = null;
+        boolean byteRangeNumbersOk = false;
+        boolean byteRangeShapeOk = false;
+        boolean byteRangeOffsetsOk = false;
+        boolean byteRangeCoverageOk = false;
         long fileLength = Files.size(pdfPath);
-        if (br[1] > fileLength || br[2] + br[3] > fileLength) {
-            throw new IllegalStateException("/ByteRange exceeds file length for signature " + sigName + ": " + byteRange);
-        }
-        if (br[2] < br[1]) {
-            throw new IllegalStateException("/ByteRange offsets overlap for signature " + sigName + ": " + byteRange);
+        if (byteRange == null || byteRange.size() != 4) {
+            adobeVisibilityIssues.add("/ByteRange missing or length != 4");
+        } else {
+            br = new long[4];
+            byteRangeNumbersOk = true;
+            for (int i = 0; i < 4; i++) {
+                PdfNumber num = byteRange.getAsNumber(i);
+                if (num == null) {
+                    byteRangeNumbersOk = false;
+                    adobeVisibilityIssues.add("/ByteRange element " + i + " not a number");
+                    break;
+                }
+                br[i] = num.longValue();
+            }
+            if (byteRangeNumbersOk) {
+                boolean nonNegative = br[1] >= 0 && br[2] >= 0 && br[3] >= 0;
+                if (!nonNegative) {
+                    byteRangeNumbersOk = false;
+                    adobeVisibilityIssues.add("/ByteRange has negative values");
+                }
+                byteRangeShapeOk = byteRangeNumbersOk && br[0] == 0L;
+                if (!byteRangeShapeOk) {
+                    adobeVisibilityIssues.add("/ByteRange[0] must be 0");
+                }
+                byteRangeOffsetsOk = byteRangeNumbersOk && br[2] >= br[1]
+                        && br[1] <= fileLength && br[2] + br[3] <= fileLength;
+                if (!byteRangeOffsetsOk) {
+                    adobeVisibilityIssues.add("/ByteRange offsets overlap or exceed file");
+                }
+            }
         }
 
         PdfString contents = sigDict.getAsString(PdfName.Contents);
+        boolean contentsHex = false;
+        boolean contentsEvenLength = false;
+        boolean contentsDecoded = false;
+        int contentsHexLength = 0;
         if (contents == null) {
-            throw new IllegalStateException("/Contents missing for signature " + sigName);
-        }
-        if (!contents.isHexWriting()) {
-            throw new IllegalStateException("/Contents must be a hex string for signature " + sigName);
-        }
-        if ((contents.getValueBytes().length & 1) != 0) {
-            throw new IllegalStateException("/Contents must have even length for signature " + sigName);
+            adobeVisibilityIssues.add("/Contents missing");
+        } else {
+            contentsHex = contents.isHexWriting();
+            if (!contentsHex) {
+                adobeVisibilityIssues.add("/Contents not stored as hex");
+            }
+            contentsHexLength = contents.getValueBytes().length;
+            contentsEvenLength = (contentsHexLength & 1) == 0;
+            if (!contentsEvenLength) {
+                adobeVisibilityIssues.add("/Contents hex length must be even");
+            }
+            if (contentsHex && contentsEvenLength) {
+                try {
+                    Hex.decode(contents.getValueBytes());
+                    contentsDecoded = true;
+                } catch (Exception e) {
+                    adobeVisibilityIssues.add("/Contents hex decode failed: " + e.getMessage());
+                }
+            }
         }
 
-        PdfPKCS7 pkcs7 = util.readSignatureData(sigName);
-        if (pkcs7 == null) {
-            throw new IllegalStateException("Unable to parse PKCS7 for signature " + sigName);
+        if (byteRangeNumbersOk && contents != null && br != null) {
+            long contentsOccupy = contentsHexLength;
+            boolean coverageLengthMatch = br[1] + br[3] + contentsOccupy == fileLength;
+            boolean gapMatch = br[2] == br[1] + contentsOccupy;
+            byteRangeCoverageOk = coverageLengthMatch && gapMatch;
+            if (!coverageLengthMatch) {
+                adobeVisibilityIssues.add("/ByteRange segments + /Contents length != file length");
+            }
+            if (!gapMatch) {
+                adobeVisibilityIssues.add("/ByteRange gap does not match /Contents length");
+            }
         }
-        Certificate signingCert = pkcs7.getSigningCertificate();
-        if (signingCert == null) {
-            throw new IllegalStateException("Signing certificate missing in PKCS#7 Contents for " + sigName);
-        }
-        if (!pkcs7.verifySignatureIntegrityAndAuthenticity()) {
-            throw new IllegalStateException("PKCS7 invalid for signature " + sigName);
-        }
-        String subject = extractSubject(signingCert);
 
-        return new SignatureCheckResult(sigName, filter, subFilter, true, br, pageNumber, new Rectangle(widgetRect), flags, subject);
+        boolean adobeVisible = byteRangeShapeOk && byteRangeOffsetsOk && byteRangeCoverageOk
+                && contentsHex && contentsEvenLength && filterAllowed;
+
+        boolean pkcs7Parsed = false;
+        boolean pkcs7Valid = false;
+        String pkcs7Error = null;
+        String subject = null;
+        try {
+            PdfPKCS7 pkcs7 = util.readSignatureData(sigName);
+            if (pkcs7 != null) {
+                pkcs7Parsed = true;
+                try {
+                    pkcs7Valid = pkcs7.verifySignatureIntegrityAndAuthenticity();
+                } catch (Exception e) {
+                    pkcs7Error = "Integrity check error: " + e.getMessage();
+                }
+                Certificate signingCert = pkcs7.getSigningCertificate();
+                if (signingCert == null) {
+                    pkcs7Error = pkcs7Error == null
+                            ? "Signing certificate missing in PKCS#7"
+                            : pkcs7Error + "; signing certificate missing";
+                } else {
+                    subject = extractSubject(signingCert);
+                }
+            } else {
+                pkcs7Error = "SignatureUtil returned null PdfPKCS7";
+            }
+        } catch (Exception e) {
+            pkcs7Error = e.getMessage();
+        }
+
+        return new SignatureCheckResult(
+                sigName,
+                filter,
+                subFilter,
+                filterAllowed,
+                pkcs7Parsed,
+                pkcs7Valid,
+                pkcs7Error,
+                br,
+                byteRangeShapeOk,
+                byteRangeOffsetsOk,
+                byteRangeCoverageOk,
+                contentsHex,
+                contentsEvenLength,
+                contentsDecoded,
+                contentsHexLength,
+                adobeVisible,
+                adobeVisibilityIssues,
+                pageNumber,
+                widgetRect != null ? new Rectangle(widgetRect) : null,
+                flags,
+                widgetPrintable,
+                widgetHidden,
+                widgetInAnnots,
+                widgetHasAppearance,
+                subject);
     }
 
-    private static PdfWidgetAnnotation selectWidget(List<PdfWidgetAnnotation> widgets, PdfDocument pdf, String sigName) {
+    private static PdfWidgetAnnotation selectWidget(List<PdfWidgetAnnotation> widgets) {
+        if (widgets == null || widgets.isEmpty()) {
+            return null;
+        }
+        PdfWidgetAnnotation fallback = null;
         for (PdfWidgetAnnotation widget : widgets) {
             if (widget == null) {
                 continue;
+            }
+            if (fallback == null) {
+                fallback = widget;
             }
             PdfPage page = widget.getPage();
             if (page != null) {
                 return widget;
             }
         }
-        throw new IllegalStateException("Signature field " + sigName + " is not placed on any page");
+        return fallback;
+    }
+
+    private static boolean isWidgetInAnnots(PdfPage page, PdfWidgetAnnotation widget) {
+        if (page == null || widget == null) {
+            return false;
+        }
+        PdfArray annots = page.getPdfObject().getAsArray(PdfName.Annots);
+        if (annots == null) {
+            return false;
+        }
+        PdfObject widgetObject = widget.getPdfObject();
+        for (int i = 0; i < annots.size(); i++) {
+            PdfObject candidate = annots.get(i);
+            if (candidate == null) {
+                continue;
+            }
+            if (candidate.getIndirectReference() != null && widgetObject.getIndirectReference() != null
+                    && candidate.getIndirectReference().equals(widgetObject.getIndirectReference())) {
+                return true;
+            }
+            if (candidate.equals(widgetObject)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public static boolean rectanglesSimilar(Rectangle a, Rectangle b) {
@@ -206,24 +327,61 @@ public final class SignatureDiagnostics {
         private final String name;
         private final PdfName filter;
         private final PdfName subFilter;
+        private final boolean filterAllowed;
+        private final boolean pkcs7Parsed;
         private final boolean pkcs7Valid;
+        private final String pkcs7Error;
         private final long[] byteRange;
+        private final boolean byteRangeShapeOk;
+        private final boolean byteRangeOffsetsOk;
+        private final boolean byteRangeCoverageOk;
+        private final boolean contentsHex;
+        private final boolean contentsEvenLength;
+        private final boolean contentsDecoded;
+        private final int contentsHexLength;
+        private final boolean adobeVisibleMinimal;
+        private final List<String> adobeVisibilityIssues;
         private final int pageNumber;
         private final Rectangle widgetRect;
         private final int widgetFlags;
+        private final boolean widgetPrintable;
+        private final boolean widgetHidden;
+        private final boolean widgetInAnnots;
+        private final boolean widgetHasAppearance;
         private final String signingCertificateSubject;
 
-        SignatureCheckResult(String name, PdfName filter, PdfName subFilter, boolean pkcs7Valid,
-                              long[] byteRange, int pageNumber, Rectangle widgetRect, int widgetFlags,
-                              String signingCertificateSubject) {
+        SignatureCheckResult(String name, PdfName filter, PdfName subFilter, boolean filterAllowed,
+                              boolean pkcs7Parsed, boolean pkcs7Valid, String pkcs7Error,
+                              long[] byteRange, boolean byteRangeShapeOk, boolean byteRangeOffsetsOk,
+                              boolean byteRangeCoverageOk, boolean contentsHex, boolean contentsEvenLength,
+                              boolean contentsDecoded, int contentsHexLength, boolean adobeVisibleMinimal,
+                              List<String> adobeVisibilityIssues, int pageNumber, Rectangle widgetRect,
+                              int widgetFlags, boolean widgetPrintable, boolean widgetHidden,
+                              boolean widgetInAnnots, boolean widgetHasAppearance, String signingCertificateSubject) {
             this.name = name;
             this.filter = filter;
             this.subFilter = subFilter;
+            this.filterAllowed = filterAllowed;
+            this.pkcs7Parsed = pkcs7Parsed;
             this.pkcs7Valid = pkcs7Valid;
-            this.byteRange = byteRange;
+            this.pkcs7Error = pkcs7Error;
+            this.byteRange = byteRange != null ? byteRange.clone() : null;
+            this.byteRangeShapeOk = byteRangeShapeOk;
+            this.byteRangeOffsetsOk = byteRangeOffsetsOk;
+            this.byteRangeCoverageOk = byteRangeCoverageOk;
+            this.contentsHex = contentsHex;
+            this.contentsEvenLength = contentsEvenLength;
+            this.contentsDecoded = contentsDecoded;
+            this.contentsHexLength = contentsHexLength;
+            this.adobeVisibleMinimal = adobeVisibleMinimal;
+            this.adobeVisibilityIssues = Collections.unmodifiableList(new ArrayList<>(adobeVisibilityIssues));
             this.pageNumber = pageNumber;
             this.widgetRect = widgetRect;
             this.widgetFlags = widgetFlags;
+            this.widgetPrintable = widgetPrintable;
+            this.widgetHidden = widgetHidden;
+            this.widgetInAnnots = widgetInAnnots;
+            this.widgetHasAppearance = widgetHasAppearance;
             this.signingCertificateSubject = signingCertificateSubject;
         }
 
@@ -239,12 +397,60 @@ public final class SignatureDiagnostics {
             return subFilter;
         }
 
+        public boolean isFilterAllowed() {
+            return filterAllowed;
+        }
+
+        public boolean isPkcs7Parsed() {
+            return pkcs7Parsed;
+        }
+
         public boolean isPkcs7Valid() {
             return pkcs7Valid;
         }
 
+        public String getPkcs7Error() {
+            return pkcs7Error;
+        }
+
         public long[] getByteRange() {
-            return byteRange;
+            return byteRange != null ? byteRange.clone() : null;
+        }
+
+        public boolean isByteRangeShapeOk() {
+            return byteRangeShapeOk;
+        }
+
+        public boolean isByteRangeOffsetsOk() {
+            return byteRangeOffsetsOk;
+        }
+
+        public boolean isByteRangeCoverageOk() {
+            return byteRangeCoverageOk;
+        }
+
+        public boolean isContentsHex() {
+            return contentsHex;
+        }
+
+        public boolean isContentsEvenLength() {
+            return contentsEvenLength;
+        }
+
+        public boolean isContentsDecoded() {
+            return contentsDecoded;
+        }
+
+        public int getContentsHexLength() {
+            return contentsHexLength;
+        }
+
+        public boolean isAdobeVisibleMinimalStructure() {
+            return adobeVisibleMinimal;
+        }
+
+        public List<String> getAdobeVisibilityIssues() {
+            return adobeVisibilityIssues;
         }
 
         public int getPageNumber() {
@@ -259,11 +465,30 @@ public final class SignatureDiagnostics {
             return widgetFlags;
         }
 
+        public boolean isWidgetPrintable() {
+            return widgetPrintable;
+        }
+
+        public boolean isWidgetHidden() {
+            return widgetHidden;
+        }
+
+        public boolean isWidgetInAnnots() {
+            return widgetInAnnots;
+        }
+
+        public boolean hasWidgetAppearance() {
+            return widgetHasAppearance;
+        }
+
         public String getSigningCertificateSubject() {
             return signingCertificateSubject;
         }
 
         public String formatByteRange() {
+            if (byteRange == null || byteRange.length != 4) {
+                return "<invalid>";
+            }
             return String.format("[%d, %d, %d, %d]", byteRange[0], byteRange[1], byteRange[2], byteRange[3]);
         }
     }
@@ -278,6 +503,6 @@ public final class SignatureDiagnostics {
                 return x509.getSubjectDN().getName();
             }
         }
-        return certificate.toString();
+        return certificate != null ? certificate.toString() : null;
     }
 }

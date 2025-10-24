@@ -1,18 +1,8 @@
 package com.demo.pdf;
 
 import com.itextpdf.forms.PdfAcroForm;
-import com.itextpdf.forms.fields.PdfFormField;
-import com.itextpdf.kernel.pdf.PdfArray;
-import com.itextpdf.kernel.pdf.PdfDictionary;
 import com.itextpdf.kernel.pdf.PdfDocument;
-import com.itextpdf.kernel.pdf.PdfName;
-import com.itextpdf.kernel.pdf.PdfNumber;
-import com.itextpdf.kernel.pdf.PdfObject;
 import com.itextpdf.kernel.pdf.PdfReader;
-import com.itextpdf.kernel.pdf.PdfString;
-import com.itextpdf.kernel.pdf.annot.PdfAnnotation;
-import com.itextpdf.kernel.pdf.annot.PdfWidgetAnnotation;
-import com.itextpdf.signatures.PdfPKCS7;
 import com.itextpdf.signatures.SignatureUtil;
 
 import java.io.IOException;
@@ -62,89 +52,42 @@ public final class PostSignValidator {
                 throw new IllegalStateException("Missing expected signature: " + fname);
             }
 
-            PdfFormField field = acro.getField(fname);
-            if (field == null) {
-                throw new IllegalStateException("Signature field missing: " + fname);
-            }
-            PdfDictionary fDict = field.getPdfObject();
-            PdfDictionary sig = fDict.getAsDictionary(PdfName.V);
-            if (sig == null) {
-                throw new IllegalStateException("Field /V is null (no /Sig).");
-            }
+            SignatureDiagnostics.SignatureCheckResult result =
+                    SignatureDiagnostics.inspectSignature(Path.of(dest), pdf, su, acro, fname);
 
-            PdfName filter = sig.getAsName(PdfName.Filter);
-            if (!PdfName.Adobe_PPKLite.equals(filter)) {
-                throw new IllegalStateException("Filter != /Adobe.PPKLite: " + filter);
+            if (!result.isAdobeVisibleMinimalStructure()) {
+                throw new IllegalStateException("Signature minimal structure invalid: "
+                        + String.join("; ", result.getAdobeVisibilityIssues()));
             }
-
-            PdfName sub = sig.getAsName(PdfName.SubFilter);
-            if (!(PdfName.Adbe_pkcs7_detached.equals(sub) || PdfName.ETSI_CAdES_DETACHED.equals(sub))) {
-                throw new IllegalStateException("SubFilter not CMS/CAdES: " + sub);
+            if (!result.isPkcs7Parsed()) {
+                String note = result.getPkcs7Error() != null ? (": " + result.getPkcs7Error()) : ".";
+                throw new IllegalStateException("Unable to parse PKCS#7" + note);
             }
-
-            PdfArray br = sig.getAsArray(PdfName.ByteRange);
-            if (br == null || br.size() != 4) {
-                throw new IllegalStateException("Invalid /ByteRange: " + br);
+            if (!result.isPkcs7Valid()) {
+                String note = result.getPkcs7Error() != null ? (": " + result.getPkcs7Error()) : ".";
+                throw new IllegalStateException("PKCS7 integrity/authenticity failed" + note);
             }
-            PdfNumber start = br.getAsNumber(0);
-            if (start == null || start.longValue() != 0L) {
-                throw new IllegalStateException("Invalid /ByteRange: " + br);
+            if (result.getSigningCertificateSubject() == null) {
+                throw new IllegalStateException("Signing certificate subject missing in PKCS#7 Contents.");
             }
-            for (int i = 1; i < 4; i++) {
-                PdfNumber num = br.getAsNumber(i);
-                if (num == null || num.longValue() < 0L) {
-                    throw new IllegalStateException("Invalid /ByteRange: " + br);
-                }
+            if (result.getPageNumber() < 1) {
+                throw new IllegalStateException("Signature widget is not attached to a valid page.");
             }
-
-            PdfString contents = sig.getAsString(PdfName.Contents);
-            if (contents == null || (contents.getValueBytes().length % 2) != 0) {
-                throw new IllegalStateException("/Contents must be even-length hex.");
+            if (result.getWidgetRect() == null) {
+                throw new IllegalStateException("Signature widget rectangle unavailable.");
             }
-
-            PdfPKCS7 pk = su.readSignatureData(fname);
-            if (pk.getSigningCertificate() == null) {
-                throw new IllegalStateException("Signing certificate missing in PKCS#7 Contents (cannot verify).");
+            if (!result.isWidgetPrintable()) {
+                throw new IllegalStateException("Signature widget " + fname + " is not printable (PRINT flag missing)");
             }
-            if (!pk.verifySignatureIntegrityAndAuthenticity()) {
-                throw new IllegalStateException("PKCS7 integrity/authenticity failed.");
+            if (result.isWidgetHidden()) {
+                throw new IllegalStateException("Signature widget " + fname + " is hidden (INVISIBLE/HIDDEN/NOVIEW)");
             }
-
-            List<PdfWidgetAnnotation> widgets = field.getWidgets();
-            if (widgets == null || widgets.isEmpty()) {
-                throw new IllegalStateException("Signature field has no widget.");
+            if (!result.isWidgetInAnnots()) {
+                throw new IllegalStateException("Signature widget " + fname + " not listed in page /Annots array");
             }
-            PdfWidgetAnnotation widget = widgets.get(0);
-            assertWidgetVisibleAndPrintable(widget, fname);
-            PdfWidgetUtil.ensureWidgetInAnnots(widget.getPage(), widget, fname);
-        }
-    }
-
-    private static void assertWidgetVisibleAndPrintable(PdfWidgetAnnotation widget, String fieldName) {
-        if (widget.getPage() == null) {
-            throw new IllegalStateException("Signature widget " + fieldName + " is not attached to any page");
-        }
-        PdfDictionary widgetDict = widget.getPdfObject();
-        if (widgetDict.getAsDictionary(PdfName.P) == null) {
-            throw new IllegalStateException("Signature widget " + fieldName + " is missing /P reference");
-        }
-        PdfArray rect = widgetDict.getAsArray(PdfName.Rect);
-        if (rect == null || rect.size() != 4) {
-            throw new IllegalStateException("Signature widget " + fieldName + " has invalid /Rect");
-        }
-        PdfDictionary ap = widgetDict.getAsDictionary(PdfName.AP);
-        PdfObject normalAppearance = ap != null ? ap.get(PdfName.N) : null;
-        if (normalAppearance == null) {
-            throw new IllegalStateException("Signature widget " + fieldName + " has no normal appearance (/AP.N)");
-        }
-
-        PdfNumber flagNumber = widgetDict.getAsNumber(PdfName.F);
-        int flags = flagNumber != null ? flagNumber.intValue() : widget.getFlags();
-        if ((flags & PdfAnnotation.PRINT) == 0) {
-            throw new IllegalStateException("Signature widget " + fieldName + " is not printable (PRINT flag missing)");
-        }
-        if ((flags & (PdfAnnotation.HIDDEN | PdfAnnotation.NO_VIEW | PdfAnnotation.INVISIBLE | PdfAnnotation.TOGGLE_NO_VIEW)) != 0) {
-            throw new IllegalStateException("Signature widget " + fieldName + " is hidden or NOVIEW");
+            if (!result.hasWidgetAppearance()) {
+                throw new IllegalStateException("Signature widget " + fname + " has no normal appearance (/AP.N)");
+            }
         }
     }
 
