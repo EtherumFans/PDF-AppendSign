@@ -2,7 +2,6 @@ package com.demo.pdf;
 
 import com.demo.crypto.DemoKeystoreUtil;
 import com.itextpdf.forms.PdfAcroForm;
-import com.itextpdf.forms.fields.PdfFormField;
 import com.itextpdf.kernel.pdf.PdfArray;
 import com.itextpdf.kernel.pdf.PdfDictionary;
 import com.itextpdf.kernel.pdf.PdfDocument;
@@ -10,9 +9,6 @@ import com.itextpdf.kernel.pdf.PdfName;
 import com.itextpdf.kernel.pdf.PdfObject;
 import com.itextpdf.kernel.pdf.PdfReader;
 import com.itextpdf.kernel.pdf.PdfString;
-import com.itextpdf.kernel.pdf.annot.PdfAnnotation;
-import com.itextpdf.kernel.pdf.annot.PdfWidgetAnnotation;
-import com.itextpdf.kernel.pdf.PdfPage;
 import com.itextpdf.signatures.SignatureUtil;
 
 import com.itextpdf.kernel.geom.Rectangle;
@@ -23,6 +19,14 @@ import java.util.List;
 public class SignatureVerifier {
 
     public static int verify(String path) throws Exception {
+        return runVerification(path, false);
+    }
+
+    public static int deepVerify(String path) throws Exception {
+        return runVerification(path, true);
+    }
+
+    private static int runVerification(String path, boolean deepMode) throws Exception {
         DemoKeystoreUtil.ensureProvider();
         Path pdfPath = Path.of(path);
         PdfSanityUtil.requireHeader(pdfPath);
@@ -49,43 +53,52 @@ public class SignatureVerifier {
                 int rowIndex = SignatureDiagnostics.extractRowIndex(name);
                 if (rowIndex > 0) {
                     Rectangle expectedRect = LayoutUtil.sigRectForRow(pdf, result.getPageNumber(), rowIndex);
-                    if (!SignatureDiagnostics.rectanglesSimilar(result.getWidgetRect(), expectedRect)) {
+                    if (result.getWidgetRect() != null
+                            && !SignatureDiagnostics.rectanglesSimilar(result.getWidgetRect(), expectedRect)) {
                         throw new IllegalStateException("Signature widget rectangle mismatch for " + name);
                     }
                 }
 
-                PdfFormField field = acro.getField(name);
-                PdfWidgetAnnotation widget = field != null && field.getWidgets() != null && !field.getWidgets().isEmpty()
-                        ? field.getWidgets().get(0)
-                        : null;
-
                 String subject = result.getSigningCertificateSubject() != null
                         ? result.getSigningCertificateSubject()
                         : "<missing>";
-                System.out.printf(" - %s | Filter=/%s, SubFilter=/%s, Valid=%s%n",
+                String filterValue = result.getFilter() != null ? result.getFilter().getValue() : "<null>";
+                String subFilterValue = result.getSubFilter() != null ? result.getSubFilter().getValue() : "<null>";
+                System.out.printf(" - %s | Filter=/%s, SubFilter=/%s%n",
                         name,
-                        result.getFilter().getValue(),
-                        result.getSubFilter().getValue(),
-                        result.isPkcs7Valid());
+                        filterValue,
+                        subFilterValue);
+                boolean brShapeOk = result.isByteRangeShapeOk() && result.isByteRangeOffsetsOk();
+                boolean contHexOk = result.isContentsHex() && result.isContentsEvenLength();
+                System.out.printf("     Adobe-visible(minimal-structure): %s (brShape=%s, contHex=%s, coverage=%s, filter=%s)%n",
+                        result.isAdobeVisibleMinimalStructure(),
+                        brShapeOk,
+                        contHexOk,
+                        result.isByteRangeCoverageOk(),
+                        result.isFilterAllowed());
+                if (!result.isAdobeVisibleMinimalStructure()) {
+                    for (String reason : result.getAdobeVisibilityIssues()) {
+                        System.out.println("       - " + reason);
+                    }
+                }
+                System.out.printf("     PKCS7 parsed=%s, Valid=%s%n", result.isPkcs7Parsed(), result.isPkcs7Valid());
+                if (result.getPkcs7Error() != null) {
+                    System.out.println("       PKCS7 note: " + result.getPkcs7Error());
+                }
                 System.out.println("     Signing cert subject: " + subject);
-                System.out.println("     ByteRange=" + result.formatByteRange());
-                boolean printable = (result.getWidgetFlags() & PdfAnnotation.PRINT) != 0;
-                boolean hidden = (result.getWidgetFlags() & (PdfAnnotation.INVISIBLE
-                        | PdfAnnotation.HIDDEN
-                        | PdfAnnotation.NO_VIEW
-                        | PdfAnnotation.TOGGLE_NO_VIEW)) != 0;
-                System.out.println("     Widget PRINT=" + printable + ", INVISIBLE/HIDDEN/NOVIEW=" + hidden);
-                if (widget != null) {
-                    PdfDictionary ap = widget.getPdfObject().getAsDictionary(PdfName.AP);
-                    PdfObject normalAppearance = ap != null ? ap.get(PdfName.N) : null;
-                    PdfPage widgetPage = widget.getPage();
-                    boolean inAnnots = isWidgetInAnnots(widgetPage, widget);
-                    System.out.println("     Widget page=" + result.getPageNumber()
-                            + ", rect=" + result.getWidgetRect()
-                            + ", AP(N)=" + (normalAppearance != null)
-                            + ", inAnnots=" + inAnnots);
-                } else {
-                    System.out.println("     Widget details unavailable (field missing widget)");
+                System.out.println("     ByteRange=" + result.formatByteRange()
+                        + ", ContentsHexLen=" + result.getContentsHexLength());
+                System.out.println("     Widget PRINT=" + result.isWidgetPrintable()
+                        + ", INVISIBLE/HIDDEN/NOVIEW=" + result.isWidgetHidden());
+                System.out.println("     Widget page=" + result.getPageNumber()
+                        + ", rect=" + result.getWidgetRect()
+                        + ", AP(N)=" + result.hasWidgetAppearance()
+                        + ", inAnnots=" + result.isWidgetInAnnots());
+                if (deepMode) {
+                    String verdict = result.isAdobeVisibleMinimalStructure()
+                            ? "WILL be shown by Acrobat"
+                            : "WILL NOT be shown by Acrobat";
+                    System.out.println("     => This signature " + verdict + " (based on minimal structure checks)");
                 }
             }
             return 0;
@@ -149,6 +162,7 @@ public class SignatureVerifier {
             System.err.println("Usage:");
             System.err.println("  java ... SignatureVerifier <pdf>");
             System.err.println("  java ... SignatureVerifier dump-acroform <pdf>");
+            System.err.println("  java ... SignatureVerifier deep-verify <pdf>");
             System.exit(2);
         }
 
@@ -157,32 +171,12 @@ public class SignatureVerifier {
             return;
         }
 
+        if (args.length == 2 && "deep-verify".equals(args[0])) {
+            int code = deepVerify(args[1]);
+            System.exit(code);
+        }
+
         int code = verify(args[0]);
         System.exit(code);
-    }
-
-    private static boolean isWidgetInAnnots(PdfPage page, PdfWidgetAnnotation widget) {
-        if (page == null || widget == null) {
-            return false;
-        }
-        PdfArray annots = page.getPdfObject().getAsArray(PdfName.Annots);
-        if (annots == null) {
-            return false;
-        }
-        PdfDictionary widgetObject = widget.getPdfObject();
-        for (int i = 0; i < annots.size(); i++) {
-            PdfObject candidate = annots.get(i);
-            if (candidate == null) {
-                continue;
-            }
-            if (candidate.getIndirectReference() != null && widgetObject.getIndirectReference() != null
-                    && candidate.getIndirectReference().equals(widgetObject.getIndirectReference())) {
-                return true;
-            }
-            if (candidate.equals(widgetObject)) {
-                return true;
-            }
-        }
-        return false;
     }
 }

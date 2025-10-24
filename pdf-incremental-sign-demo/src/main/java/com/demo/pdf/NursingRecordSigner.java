@@ -562,6 +562,13 @@ public final class NursingRecordSigner {
 
             SignatureDiagnostics.SignatureCheckResult result =
                     SignatureDiagnostics.inspectSignature(destPath, pdf, util, acro, sigName);
+            if (!result.isAdobeVisibleMinimalStructure()) {
+                throw new IllegalStateException("Signature minimal structure invalid after signing: "
+                        + String.join("; ", result.getAdobeVisibilityIssues()));
+            }
+            if (result.getWidgetRect() == null) {
+                throw new IllegalStateException("Signature widget rectangle unavailable for " + sigName);
+            }
             if (result.getPageNumber() != expectedPage) {
                 throw new IllegalStateException("Signature widget for " + sigName + " expected on page "
                         + expectedPage + " but found on page " + result.getPageNumber());
