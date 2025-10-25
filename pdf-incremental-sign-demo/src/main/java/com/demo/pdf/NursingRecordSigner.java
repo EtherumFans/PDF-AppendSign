@@ -234,7 +234,7 @@ public final class NursingRecordSigner {
             PdfSigner signer = new PdfSigner(reader, fos, new StampingProperties().useAppendMode());
             document = signer.getDocument();
             PdfAcroForm acro = PdfAcroForm.getAcroForm(document, true);
-            FormUtil.ensureNeedAppearances(acro);
+            FormUtil.ensureAcroFormAppearanceDefaults(document, acro);
             acro.setSignatureFlags(PdfAcroForm.SIGNATURE_EXIST | PdfAcroForm.APPEND_ONLY);
 
             if (params.getPage() < 1 || params.getPage() > document.getNumberOfPages()) {
