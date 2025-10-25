@@ -173,13 +173,15 @@ public class SignatureVerifier {
                     } else {
                         System.out.printf("  [%d] FT=%s, T=%s, obj#=<direct>%n", i, ft, t);
                     }
-                    PdfObject v = f.get(PdfName.V);
-                    if (v != null && v.isDictionary()) {
-                        PdfDictionary sig = (PdfDictionary) v;
+                    PdfDictionary vDict = f.getAsDictionary(PdfName.V);
+                    if (vDict != null) {
+                        PdfIndirectReference vRef = vDict.getIndirectReference();
+                        System.out.println("      /V isIndirect: " + (vRef != null)
+                                + (vRef != null ? ", obj#=" + vRef.getObjNumber() : ""));
                         System.out.printf("      /V Type=%s, Filter=%s, SubFilter=%s%n",
-                                sig.getAsName(PdfName.Type),
-                                sig.getAsName(PdfName.Filter),
-                                sig.getAsName(PdfName.SubFilter));
+                                vDict.getAsName(PdfName.Type),
+                                vDict.getAsName(PdfName.Filter),
+                                vDict.getAsName(PdfName.SubFilter));
                     }
                 }
             }
