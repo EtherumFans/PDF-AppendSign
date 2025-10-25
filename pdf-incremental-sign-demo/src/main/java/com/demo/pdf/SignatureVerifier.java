@@ -232,7 +232,11 @@ public class SignatureVerifier {
                         if (sigField.getWidgets() != null && !sigField.getWidgets().isEmpty()) {
                             widget = sigField.getWidgets().get(0);
                         }
-                        PdfDictionary wObj = widget != null ? widget.getPdfObject() : null;
+                        PdfDictionary wObj = widget != null ? widget.getPdfObject() : f; // 合并字典时两者相同
+                        PdfName sub = wObj.getAsName(PdfName.Subtype);
+                        PdfName typ = wObj.getAsName(PdfName.Type);
+                        System.out.println("      Widget/Subtype: " + sub);
+                        System.out.println("      Widget/Type: " + typ);
 
                         PdfDictionary parent = wObj != null ? wObj.getAsDictionary(PdfName.Parent) : null;
                         boolean parentOk = sameIndirectRef(parent, f);
