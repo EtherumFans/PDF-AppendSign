@@ -251,9 +251,18 @@ public class SignatureVerifier {
                             System.out.println("      Widget obj#: " + wObj.getIndirectReference().getObjNumber());
                         }
                         if (widget != null && widget.getPage() != null) {
-                            PdfIndirectReference pref = widget.getPage().getPdfObject().getIndirectReference();
+                            PdfDictionary pageDict = widget.getPage().getPdfObject();
+                            PdfIndirectReference pref = pageDict.getIndirectReference();
                             System.out.println("      Widget page obj#: " + (pref != null ? pref.getObjNumber() : -1));
+
+                            PdfArray annots = pageDict.getAsArray(PdfName.Annots);
+                            boolean inAnnots = arrayContainsDictRef(annots, wObj);
+                            System.out.println("      Widget in page Annots: " + inAnnots);
                         }
+
+                        PdfDictionary ap = wObj.getAsDictionary(PdfName.AP);
+                        PdfObject apN = ap != null ? ap.get(PdfName.N) : null;
+                        System.out.println("      Widget AP(N) present: " + (apN != null));
                     }
                 }
             }
