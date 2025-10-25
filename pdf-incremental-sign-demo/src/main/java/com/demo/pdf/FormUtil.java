@@ -42,7 +42,7 @@ public final class FormUtil {
         form.getPdfObject().remove(PdfName.NeedAppearances);
         PdfString defaultAppearance = form.getDefaultAppearance();
         if (defaultAppearance == null || defaultAppearance.toUnicodeString().isBlank()) {
-            form.setDefaultAppearance(new PdfString("/Helv 0 Tf 0 g"));
+            form.setDefaultAppearance("/Helv 0 Tf 0 g");
         }
 
         PdfDictionary dr = form.getPdfObject().getAsDictionary(PdfName.DR);
