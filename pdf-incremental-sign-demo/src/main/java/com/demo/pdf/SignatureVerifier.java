@@ -7,6 +7,7 @@ import com.itextpdf.kernel.pdf.PdfDictionary;
 import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfIndirectReference;
 import com.itextpdf.kernel.pdf.PdfName;
+import com.itextpdf.kernel.pdf.PdfNumber;
 import com.itextpdf.kernel.pdf.PdfObject;
 import com.itextpdf.kernel.pdf.PdfReader;
 import com.itextpdf.kernel.pdf.PdfString;
@@ -153,6 +154,8 @@ public class SignatureVerifier {
             } else {
                 System.out.println("AcroForm obj#: <direct>");
             }
+            PdfNumber sigFlags = acro.getAsNumber(PdfName.SigFlags);
+            System.out.println("AcroForm.SigFlags: " + (sigFlags == null ? "<none>" : sigFlags.intValue()));
             PdfArray fields = acro.getAsArray(PdfName.Fields);
             System.out.println("AcroForm.Fields count: " + (fields == null ? 0 : fields.size()));
             if (fields != null) {
