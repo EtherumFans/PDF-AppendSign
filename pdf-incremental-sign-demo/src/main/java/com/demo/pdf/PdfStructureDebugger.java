@@ -2,6 +2,7 @@ package com.demo.pdf;
 
 import com.itextpdf.forms.PdfAcroForm;
 import com.itextpdf.forms.fields.PdfFormField;
+import com.itextpdf.forms.fields.PdfSignatureFormField;
 import com.itextpdf.kernel.geom.Rectangle;
 import com.itextpdf.kernel.pdf.PdfArray;
 import com.itextpdf.kernel.pdf.PdfDictionary;
@@ -149,6 +150,12 @@ public final class PdfStructureDebugger {
         }
 
         PdfDictionary fieldDict = field.getPdfObject();
+        if (field instanceof PdfSignatureFormField) {
+            PdfSignatureFormField sig = (PdfSignatureFormField) field;
+            PdfWidgetAnnotation w = sig.getWidgets().isEmpty() ? null : sig.getWidgets().get(0);
+            PdfDictionary parent = w != null ? w.getPdfObject().getAsDictionary(PdfName.Parent) : null;
+            System.out.println("  Widget has /Parent->field: " + (parent != null && parent == fieldDict));
+        }
         PdfDictionary sigDict = fieldDict.getAsDictionary(PdfName.V);
         if (sigDict == null) {
             ok = false;
