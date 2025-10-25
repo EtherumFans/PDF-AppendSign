@@ -11,6 +11,7 @@ import com.itextpdf.kernel.pdf.PdfIndirectReference;
 import com.itextpdf.kernel.pdf.PdfName;
 import com.itextpdf.kernel.pdf.PdfNumber;
 import com.itextpdf.kernel.pdf.PdfObject;
+import com.itextpdf.kernel.pdf.PdfPage;
 import com.itextpdf.kernel.pdf.PdfReader;
 import com.itextpdf.kernel.pdf.PdfString;
 import com.itextpdf.kernel.geom.Rectangle;
@@ -232,6 +233,40 @@ public class SignatureVerifier {
                         if (sigField.getWidgets() != null && !sigField.getWidgets().isEmpty()) {
                             widget = sigField.getWidgets().get(0);
                         }
+                        PdfPage page = widget != null ? widget.getPage() : null;
+                        PdfDictionary pageDict = null;
+                        PdfArray media = null;
+                        PdfArray crop = null;
+                        if (page != null) {
+                            pageDict = page.getPdfObject();
+                            media = pageDict.getAsArray(PdfName.MediaBox);
+                            crop = pageDict.getAsArray(PdfName.CropBox);
+                            System.out.println("      Page MediaBox: " + media);
+                            System.out.println("      Page CropBox : " + (crop != null ? crop : media));
+                        }
+
+                        PdfArray rectArr = widget != null ? widget.getRectangle() : null;
+                        System.out.println("      Widget /Rect : " + rectArr);
+
+                        boolean rectOk = false, intersects = false;
+                        if (rectArr != null && rectArr.size() == 4) {
+                            float x1 = rectArr.getAsNumber(0).floatValue();
+                            float y1 = rectArr.getAsNumber(1).floatValue();
+                            float x2 = rectArr.getAsNumber(2).floatValue();
+                            float y2 = rectArr.getAsNumber(3).floatValue();
+                            rectOk = (x2 > x1) && (y2 > y1);
+
+                            PdfArray box = (crop != null) ? crop : media;
+                            if (box != null && box.size() == 4) {
+                                float bx1 = box.getAsNumber(0).floatValue();
+                                float by1 = box.getAsNumber(1).floatValue();
+                                float bx2 = box.getAsNumber(2).floatValue();
+                                float by2 = box.getAsNumber(3).floatValue();
+                                intersects = !(x2 <= bx1 || x1 >= bx2 || y2 <= by1 || y1 >= by2);
+                            }
+                        }
+                        System.out.println("      Rect valid   : " + rectOk + ", intersects page: " + intersects);
+
                         PdfDictionary wObj = widget != null ? widget.getPdfObject() : f; // 合并字典时两者相同
                         PdfName sub = wObj.getAsName(PdfName.Subtype);
                         PdfName typ = wObj.getAsName(PdfName.Type);
@@ -250,8 +285,7 @@ public class SignatureVerifier {
                         if (wObj != null && wObj.getIndirectReference() != null) {
                             System.out.println("      Widget obj#: " + wObj.getIndirectReference().getObjNumber());
                         }
-                        if (widget != null && widget.getPage() != null) {
-                            PdfDictionary pageDict = widget.getPage().getPdfObject();
+                        if (pageDict != null) {
                             PdfIndirectReference pref = pageDict.getIndirectReference();
                             System.out.println("      Widget page obj#: " + (pref != null ? pref.getObjNumber() : -1));
 
