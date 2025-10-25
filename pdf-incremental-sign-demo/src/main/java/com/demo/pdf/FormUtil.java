@@ -59,6 +59,8 @@ public final class FormUtil {
         PdfDictionary widgetObject = widget.getPdfObject();
         PdfDictionary fieldObject = field.getPdfObject();
 
+        boolean mergedFieldAndWidget = isMergedFieldAndWidget(fieldObject, widgetObject);
+
         widgetObject.put(PdfName.Subtype, PdfName.Widget);
         widgetObject.put(PdfName.Type, PdfName.Annot);
 
@@ -67,14 +69,19 @@ public final class FormUtil {
         widget.setPage(page);
         widgetObject.put(PdfName.P, page.getPdfObject());
 
-        widgetObject.put(PdfName.Parent, fieldObject);
-        PdfArray kids = fieldObject.getAsArray(PdfName.Kids);
-        if (kids == null) {
-            kids = new PdfArray();
-            fieldObject.put(PdfName.Kids, kids);
-        }
-        if (!containsDictionaryReference(kids, widgetObject)) {
-            kids.add(widgetObject);
+        if (mergedFieldAndWidget) {
+            widgetObject.remove(PdfName.Parent);
+            fieldObject.remove(PdfName.Kids);
+        } else {
+            widgetObject.put(PdfName.Parent, fieldObject);
+            PdfArray kids = fieldObject.getAsArray(PdfName.Kids);
+            if (kids == null) {
+                kids = new PdfArray();
+                fieldObject.put(PdfName.Kids, kids);
+            }
+            if (!containsDictionaryReference(kids, widgetObject)) {
+                kids.add(widgetObject);
+            }
         }
 
         PdfArray annots = page.getPdfObject().getAsArray(PdfName.Annots);
@@ -128,6 +135,19 @@ public final class FormUtil {
 
         widget.setAppearance(PdfName.N, appearance.getPdfObject());
         widget.setAppearanceState(PdfName.N);
+    }
+
+    private static boolean isMergedFieldAndWidget(PdfDictionary fieldObject, PdfDictionary widgetObject) {
+        if (fieldObject == null || widgetObject == null) {
+            return false;
+        }
+        if (fieldObject == widgetObject) {
+            return true;
+        }
+        if (fieldObject.getIndirectReference() != null && widgetObject.getIndirectReference() != null) {
+            return fieldObject.getIndirectReference().equals(widgetObject.getIndirectReference());
+        }
+        return false;
     }
 
     private static boolean containsDictionaryReference(PdfArray array, PdfDictionary dictionary) {
