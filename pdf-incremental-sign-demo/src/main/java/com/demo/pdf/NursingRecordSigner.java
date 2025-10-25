@@ -234,7 +234,6 @@ public final class NursingRecordSigner {
             PdfSigner signer = new PdfSigner(reader, fos, new StampingProperties().useAppendMode());
             document = signer.getDocument();
             PdfAcroForm acro = ensureAcroFormResources(document);
-            acro.setSignatureFlags(PdfAcroForm.SIGNATURE_EXIST | PdfAcroForm.APPEND_ONLY);
 
             if (params.getPage() < 1 || params.getPage() > document.getNumberOfPages()) {
                 throw new IllegalArgumentException("Page " + params.getPage() + " is out of bounds");
@@ -398,6 +397,12 @@ public final class NursingRecordSigner {
         }
         PdfAcroForm acro = PdfAcroForm.getAcroForm(document, true);
         FormUtil.ensureAcroFormAppearanceDefaults(document, acro);
+        int requiredFlags = PdfAcroForm.SIGNATURE_EXIST | PdfAcroForm.APPEND_ONLY;
+        int currentFlags = acro.getSignatureFlags();
+        if ((currentFlags & requiredFlags) != requiredFlags) {
+            acro.setSignatureFlags(currentFlags | requiredFlags);
+            acro.getPdfObject().setModified();
+        }
         return acro;
     }
 

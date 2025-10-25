@@ -24,6 +24,7 @@ public final class FormUtil {
 
     private static final PdfName HELV_FONT_NAME = new PdfName("Helv");
     private static final PdfName ZADB_FONT_NAME = new PdfName("ZaDb");
+    private static final String DEFAULT_APPEARANCE = "/Helv 12 Tf 0 g";
 
     private FormUtil() {
     }
@@ -39,39 +40,50 @@ public final class FormUtil {
             return;
         }
 
-        form.getPdfObject().remove(PdfName.NeedAppearances);
+        boolean modified = false;
+        if (form.getPdfObject().containsKey(PdfName.NeedAppearances)) {
+            form.getPdfObject().remove(PdfName.NeedAppearances);
+            modified = true;
+        }
+
         PdfString defaultAppearance = form.getDefaultAppearance();
-        if (defaultAppearance == null || !"/Helv 0 Tf 0 g".equals(defaultAppearance.toUnicodeString())) {
-            form.setDefaultAppearance("/Helv 0 Tf 0 g");
+        if (defaultAppearance == null || !DEFAULT_APPEARANCE.equals(defaultAppearance.toUnicodeString())) {
+            form.setDefaultAppearance(DEFAULT_APPEARANCE);
+            modified = true;
         }
 
         PdfDictionary dr = form.getPdfObject().getAsDictionary(PdfName.DR);
         if (dr == null) {
             dr = new PdfDictionary();
             form.getPdfObject().put(PdfName.DR, dr);
+            modified = true;
         }
 
         PdfDictionary fonts = dr.getAsDictionary(PdfName.Font);
         if (fonts == null) {
             fonts = new PdfDictionary();
             dr.put(PdfName.Font, fonts);
+            modified = true;
         }
 
-        ensureFontResource(document, fonts, HELV_FONT_NAME, StandardFonts.HELVETICA);
-        ensureFontResource(document, fonts, ZADB_FONT_NAME, StandardFonts.ZAPFDINGBATS);
+        modified = ensureFontResource(document, fonts, HELV_FONT_NAME, StandardFonts.HELVETICA) || modified;
+        modified = ensureFontResource(document, fonts, ZADB_FONT_NAME, StandardFonts.ZAPFDINGBATS) || modified;
 
-        form.getPdfObject().setModified();
+        if (modified) {
+            form.getPdfObject().setModified();
+        }
     }
 
-    private static void ensureFontResource(PdfDocument document,
-                                           PdfDictionary fonts,
-                                           PdfName alias,
-                                           String fontName) {
+    private static boolean ensureFontResource(PdfDocument document,
+                                              PdfDictionary fonts,
+                                              PdfName alias,
+                                              String fontName) {
         fonts.remove(alias);
         try {
             PdfFont font = PdfFontFactory.createFont(fontName);
             font.makeIndirect(document);
             fonts.put(alias, font.getPdfObject());
+            return true;
         } catch (Exception e) {
             throw new IllegalStateException("Unable to add font resource '" + fontName + "'", e);
         }
