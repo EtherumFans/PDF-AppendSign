@@ -10,7 +10,6 @@ import com.itextpdf.kernel.pdf.PdfName;
 import com.itextpdf.kernel.pdf.PdfObject;
 import com.itextpdf.kernel.pdf.PdfReader;
 import com.itextpdf.kernel.pdf.PdfString;
-import com.itextpdf.kernel.pdf.PdfXrefTable;
 import com.itextpdf.signatures.SignatureUtil;
 
 import com.itextpdf.kernel.geom.Rectangle;
@@ -224,10 +223,13 @@ public class SignatureVerifier {
 
     public static Set<Integer> buildLatestReachableSet(PdfDocument pdf) {
         Set<Integer> reachable = new HashSet<>();
-        PdfXrefTable xref = pdf.getXref();
-        int count = xref.getCountOfIndirectObjects();
-        for (int i = 0; i < count; i++) {
-            PdfIndirectReference ref = xref.get(i);
+        int objectCount = pdf.getNumberOfPdfObjects();
+        for (int i = 1; i <= objectCount; i++) {
+            PdfObject obj = pdf.getPdfObject(i);
+            if (obj == null) {
+                continue;
+            }
+            PdfIndirectReference ref = obj.getIndirectReference();
             if (ref != null && !ref.isFree()) {
                 reachable.add(ref.getObjNumber());
             }
