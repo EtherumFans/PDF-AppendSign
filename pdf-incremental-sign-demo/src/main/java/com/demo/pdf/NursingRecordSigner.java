@@ -410,9 +410,15 @@ public final class NursingRecordSigner {
                 throw new IllegalStateException("Field not found: " + name);
             }
             Rectangle rect = LayoutUtil.getFieldRect(pageSize, row, slot);
-            PdfTextFormField created = multiline
-                    ? PdfTextFormField.createMultilineText(document, rect, name, "")
-                    : PdfTextFormField.createText(document, rect, name, "");
+            PdfTextFormField created;
+            if (font != null) {
+                created = PdfFormField.createText(document, rect, name, "", font, 12);
+            } else {
+                created = PdfFormField.createText(document, rect, name, "");
+            }
+            if (multiline) {
+                created.setMultiline(true);
+            }
             styleTextField(created, font, multiline, true);
             form.addField(created, document.getPage(pageNumber));
             return created;
