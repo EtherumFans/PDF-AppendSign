@@ -12,6 +12,7 @@ import com.itextpdf.kernel.pdf.PdfDictionary;
 import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfName;
 import com.itextpdf.kernel.pdf.PdfPage;
+import com.itextpdf.kernel.pdf.PdfObject;
 import com.itextpdf.kernel.pdf.PdfString;
 import com.itextpdf.kernel.pdf.annot.PdfAnnotation;
 import com.itextpdf.kernel.pdf.annot.PdfWidgetAnnotation;
@@ -23,6 +24,7 @@ import java.util.List;
 public final class FormUtil {
 
     private static final PdfName HELV_FONT_NAME = new PdfName("Helv");
+    private static final PdfName F1_FONT_NAME = new PdfName("F1");
     private static final PdfName ZADB_FONT_NAME = new PdfName("ZaDb");
     private static final String DEFAULT_APPEARANCE = "/Helv 12 Tf 0 g";
 
@@ -66,26 +68,53 @@ public final class FormUtil {
             modified = true;
         }
 
-        modified = ensureFontResource(document, fonts, HELV_FONT_NAME, StandardFonts.HELVETICA) || modified;
-        modified = ensureFontResource(document, fonts, ZADB_FONT_NAME, StandardFonts.ZAPFDINGBATS) || modified;
+        FontRegistration helvetica = ensureFontResource(document, fonts, HELV_FONT_NAME, StandardFonts.HELVETICA);
+        FontRegistration zapf = ensureFontResource(document, fonts, ZADB_FONT_NAME, StandardFonts.ZAPFDINGBATS);
+        modified = helvetica.changed || modified;
+        modified = zapf.changed || modified;
+        modified = ensureFontAlias(fonts, HELV_FONT_NAME, helvetica.font) || modified;
+        modified = ensureFontAlias(fonts, F1_FONT_NAME, helvetica.font) || modified;
+        modified = ensureFontAlias(fonts, ZADB_FONT_NAME, zapf.font) || modified;
 
         if (modified) {
             form.getPdfObject().setModified();
         }
     }
 
-    private static boolean ensureFontResource(PdfDocument document,
-                                              PdfDictionary fonts,
-                                              PdfName alias,
-                                              String fontName) {
-        fonts.remove(alias);
+    private static FontRegistration ensureFontResource(PdfDocument document,
+                                                       PdfDictionary fonts,
+                                                       PdfName alias,
+                                                       String fontName) {
         try {
+            PdfObject existing = fonts.get(alias);
             PdfFont font = PdfFontFactory.createFont(fontName);
             font.makeIndirect(document);
             fonts.put(alias, font.getPdfObject());
-            return true;
+            boolean changed = existing == null || !font.getPdfObject().equals(existing);
+            return new FontRegistration(font, changed);
         } catch (Exception e) {
             throw new IllegalStateException("Unable to add font resource '" + fontName + "'", e);
+        }
+    }
+
+    private static boolean ensureFontAlias(PdfDictionary fonts, PdfName alias, PdfFont font) {
+        if (fonts == null || alias == null || font == null) {
+            return false;
+        }
+        if (font.getPdfObject().equals(fonts.get(alias))) {
+            return false;
+        }
+        fonts.put(alias, font.getPdfObject());
+        return true;
+    }
+
+    private static final class FontRegistration {
+        private final PdfFont font;
+        private final boolean changed;
+
+        private FontRegistration(PdfFont font, boolean changed) {
+            this.font = font;
+            this.changed = changed;
         }
     }
 
