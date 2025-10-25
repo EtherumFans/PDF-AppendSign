@@ -2,6 +2,8 @@ package com.demo.pdf;
 
 import com.demo.crypto.DemoKeystoreUtil;
 import com.itextpdf.forms.PdfAcroForm;
+import com.itextpdf.forms.fields.PdfFormField;
+import com.itextpdf.forms.fields.PdfSignatureFormField;
 import com.itextpdf.kernel.pdf.PdfArray;
 import com.itextpdf.kernel.pdf.PdfDictionary;
 import com.itextpdf.kernel.pdf.PdfDocument;
@@ -11,9 +13,9 @@ import com.itextpdf.kernel.pdf.PdfNumber;
 import com.itextpdf.kernel.pdf.PdfObject;
 import com.itextpdf.kernel.pdf.PdfReader;
 import com.itextpdf.kernel.pdf.PdfString;
-import com.itextpdf.signatures.SignatureUtil;
-
 import com.itextpdf.kernel.geom.Rectangle;
+import com.itextpdf.kernel.pdf.annot.PdfWidgetAnnotation;
+import com.itextpdf.signatures.SignatureUtil;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -138,6 +140,37 @@ public class SignatureVerifier {
         }
     }
 
+    private static boolean sameIndirectRef(PdfDictionary a, PdfDictionary b) {
+        if (a == null || b == null) {
+            return false;
+        }
+        PdfIndirectReference ra = a.getIndirectReference();
+        PdfIndirectReference rb = b.getIndirectReference();
+        return ra != null && rb != null
+                && ra.getObjNumber() == rb.getObjNumber()
+                && ra.getGenNumber() == rb.getGenNumber();
+    }
+
+    private static boolean arrayContainsDictRef(PdfArray arr, PdfDictionary dict) {
+        if (arr == null || dict == null) {
+            return false;
+        }
+        PdfIndirectReference r = dict.getIndirectReference();
+        for (int i = 0; i < arr.size(); i++) {
+            PdfObject o = arr.get(i, true);
+            PdfIndirectReference ri = o.getIndirectReference();
+            if (ri != null && r != null
+                    && ri.getObjNumber() == r.getObjNumber()
+                    && ri.getGenNumber() == r.getGenNumber()) {
+                return true;
+            }
+            if (o.isDictionary() && sameIndirectRef((PdfDictionary) o, dict)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static void dumpCatalogAndAcroForm(String pdf) throws Exception {
         try (PdfDocument doc = new PdfDocument(new PdfReader(pdf))) {
             PdfDictionary root = doc.getCatalog().getPdfObject();
@@ -160,6 +193,8 @@ public class SignatureVerifier {
             } else {
                 System.out.println("AcroForm obj#: <direct>");
             }
+            PdfObject xfa = acro.get(PdfName.XFA);
+            System.out.println("AcroForm has /XFA: " + (xfa != null));
             PdfNumber sigFlags = acro.getAsNumber(PdfName.SigFlags);
             System.out.println("AcroForm.SigFlags: " + (sigFlags == null ? "<none>" : sigFlags.intValue()));
             PdfArray fields = acro.getAsArray(PdfName.Fields);
@@ -188,6 +223,33 @@ public class SignatureVerifier {
                                 vDict.getAsName(PdfName.Type),
                                 vDict.getAsName(PdfName.Filter),
                                 vDict.getAsName(PdfName.SubFilter));
+                    }
+                    PdfFormField asField = PdfFormField.makeFormField(f);
+                    if (asField instanceof PdfSignatureFormField) {
+                        PdfSignatureFormField sigField = (PdfSignatureFormField) asField;
+
+                        PdfWidgetAnnotation widget = null;
+                        if (sigField.getWidgets() != null && !sigField.getWidgets().isEmpty()) {
+                            widget = sigField.getWidgets().get(0);
+                        }
+                        PdfDictionary wObj = widget != null ? widget.getPdfObject() : null;
+
+                        PdfDictionary parent = wObj != null ? wObj.getAsDictionary(PdfName.Parent) : null;
+                        boolean parentOk = sameIndirectRef(parent, f);
+
+                        PdfArray kids = f.getAsArray(PdfName.Kids);
+                        boolean kidsOk = arrayContainsDictRef(kids, wObj);
+
+                        System.out.println("      Widget has /Parent->field: " + parentOk);
+                        System.out.println("      Field has Kids[] contains widget: " + kidsOk);
+
+                        if (wObj != null && wObj.getIndirectReference() != null) {
+                            System.out.println("      Widget obj#: " + wObj.getIndirectReference().getObjNumber());
+                        }
+                        if (widget != null && widget.getPage() != null) {
+                            PdfIndirectReference pref = widget.getPage().getPdfObject().getIndirectReference();
+                            System.out.println("      Widget page obj#: " + (pref != null ? pref.getObjNumber() : -1));
+                        }
                     }
                 }
             }
