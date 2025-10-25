@@ -60,6 +60,7 @@ public final class FormUtil {
         PdfDictionary fieldObject = field.getPdfObject();
 
         widgetObject.put(PdfName.Subtype, PdfName.Widget);
+        widgetObject.put(PdfName.Type, PdfName.Annot);
 
         float[] rectCoords = new float[]{rect.getLeft(), rect.getBottom(), rect.getRight(), rect.getTop()};
         widget.setRectangle(new PdfArray(rectCoords));
