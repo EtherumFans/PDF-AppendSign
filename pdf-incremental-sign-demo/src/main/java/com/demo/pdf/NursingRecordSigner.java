@@ -249,12 +249,13 @@ public final class NursingRecordSigner {
             System.out.println("[sign-row] Effective mode: " + effectiveMode);
 
             Rectangle pageSize = document.getPage(params.getPage()).getPageSize();
+            PdfFont textFieldFont = resolveAppearanceFont();
             PdfTextFormField timeField = resolveTextField(document, acro, params.getPage(), pageSize, params.getRow(), timeName,
-                    LayoutUtil.FieldSlot.TIME, false, effectiveMode);
+                    LayoutUtil.FieldSlot.TIME, false, effectiveMode, textFieldFont);
             PdfTextFormField textField = resolveTextField(document, acro, params.getPage(), pageSize, params.getRow(), textName,
-                    LayoutUtil.FieldSlot.TEXT, true, effectiveMode);
+                    LayoutUtil.FieldSlot.TEXT, true, effectiveMode, textFieldFont);
             PdfTextFormField nurseField = resolveTextField(document, acro, params.getPage(), pageSize, params.getRow(), nurseName,
-                    LayoutUtil.FieldSlot.NURSE, false, effectiveMode);
+                    LayoutUtil.FieldSlot.NURSE, false, effectiveMode, textFieldFont);
             signatureContext = ensureSignatureField(document, acro, params.getPage(),
                     params.getRow(), sigName, effectiveMode);
 
@@ -296,7 +297,7 @@ public final class NursingRecordSigner {
             }
             String layer2 = String.format("护士: %s\n时间: %s\n事由: %s",
                     signerName, params.getTimeValue(), reason);
-            PdfFont font = resolveAppearanceFont();
+            PdfFont font = textFieldFont;
             appearance.setLayer2Font(font);
             appearance.setLayer2Text(layer2);
 
@@ -402,7 +403,7 @@ public final class NursingRecordSigner {
 
     private static PdfTextFormField resolveTextField(PdfDocument document, PdfAcroForm form, int pageNumber, Rectangle pageSize,
                                                      int row, String name, LayoutUtil.FieldSlot slot, boolean multiline,
-                                                     SigningMode mode) {
+                                                     SigningMode mode, PdfFont font) {
         PdfFormField field = form.getField(name);
         if (field == null) {
             if (mode != SigningMode.INJECT) {
@@ -412,10 +413,7 @@ public final class NursingRecordSigner {
             PdfTextFormField created = multiline
                     ? PdfTextFormField.createMultilineText(document, rect, name, "")
                     : PdfTextFormField.createText(document, rect, name, "");
-            created.setFontSize(12);
-            if (!multiline) {
-                created.setJustification(PdfFormField.ALIGN_CENTER);
-            }
+            styleTextField(created, font, multiline, true);
             form.addField(created, document.getPage(pageNumber));
             return created;
         }
@@ -423,10 +421,23 @@ public final class NursingRecordSigner {
             throw new IllegalStateException("Field is not a text field: " + name);
         }
         PdfTextFormField textField = (PdfTextFormField) field;
-        if (multiline) {
-            textField.setMultiline(true);
-        }
+        styleTextField(textField, font, multiline, false);
         return textField;
+    }
+
+    private static void styleTextField(PdfTextFormField field, PdfFont font, boolean multiline, boolean newlyCreated) {
+        if (field == null) {
+            return;
+        }
+        if (font != null) {
+            field.setFont(font);
+        }
+        field.setFontSize(12);
+        if (multiline) {
+            field.setMultiline(true);
+        } else if (newlyCreated) {
+            field.setJustification(PdfFormField.ALIGN_CENTER);
+        }
     }
 
     private static void configureSignatureDictionary(PdfSignature signature, String signerName,

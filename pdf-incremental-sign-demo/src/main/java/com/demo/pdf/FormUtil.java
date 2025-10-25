@@ -67,38 +67,14 @@ public final class FormUtil {
                                            PdfDictionary fonts,
                                            PdfName alias,
                                            String fontName) {
-        PdfDictionary existing = fonts.getAsDictionary(alias);
-        if (!isValidFontDictionary(existing)) {
-            fonts.remove(alias);
-            try {
-                PdfFont font = PdfFontFactory.createFont(fontName);
-                font.makeIndirect(document);
-                fonts.put(alias, font.getPdfObject());
-            } catch (Exception e) {
-                throw new IllegalStateException("Unable to add font resource '" + fontName + "'", e);
-            }
+        fonts.remove(alias);
+        try {
+            PdfFont font = PdfFontFactory.createFont(fontName);
+            font.makeIndirect(document);
+            fonts.put(alias, font.getPdfObject());
+        } catch (Exception e) {
+            throw new IllegalStateException("Unable to add font resource '" + fontName + "'", e);
         }
-    }
-
-    private static boolean isValidFontDictionary(PdfDictionary fontDictionary) {
-        if (fontDictionary == null) {
-            return false;
-        }
-
-        PdfName type = fontDictionary.getAsName(PdfName.Type);
-        if (type != null && !PdfName.Font.equals(type)) {
-            return false;
-        }
-
-        PdfName subtype = fontDictionary.getAsName(PdfName.Subtype);
-        if (subtype == null) {
-            return false;
-        }
-
-        boolean hasBaseFont = fontDictionary.getAsName(PdfName.BaseFont) != null;
-        boolean hasDescriptor = fontDictionary.getAsDictionary(PdfName.FontDescriptor) != null;
-
-        return hasBaseFont || hasDescriptor;
     }
 
     public static PdfWidgetAnnotation ensurePrintableSignatureWidget(PdfSignatureFormField field,
