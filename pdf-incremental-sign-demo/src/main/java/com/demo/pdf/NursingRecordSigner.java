@@ -233,8 +233,7 @@ public final class NursingRecordSigner {
                      StandardOpenOption.WRITE))) {
             PdfSigner signer = new PdfSigner(reader, fos, new StampingProperties().useAppendMode());
             document = signer.getDocument();
-            PdfAcroForm acro = PdfAcroForm.getAcroForm(document, true);
-            FormUtil.ensureAcroFormAppearanceDefaults(document, acro);
+            PdfAcroForm acro = ensureAcroFormResources(document);
             acro.setSignatureFlags(PdfAcroForm.SIGNATURE_EXIST | PdfAcroForm.APPEND_ONLY);
 
             if (params.getPage() < 1 || params.getPage() > document.getNumberOfPages()) {
@@ -390,6 +389,15 @@ public final class NursingRecordSigner {
             throw new IllegalStateException("Expected template fields to exist for row");
         }
         return requestedMode;
+    }
+
+    private static PdfAcroForm ensureAcroFormResources(PdfDocument document) {
+        if (document == null) {
+            throw new IllegalArgumentException("PdfDocument must not be null when preparing AcroForm resources");
+        }
+        PdfAcroForm acro = PdfAcroForm.getAcroForm(document, true);
+        FormUtil.ensureAcroFormAppearanceDefaults(document, acro);
+        return acro;
     }
 
     private static PdfTextFormField resolveTextField(PdfDocument document, PdfAcroForm form, int pageNumber, Rectangle pageSize,

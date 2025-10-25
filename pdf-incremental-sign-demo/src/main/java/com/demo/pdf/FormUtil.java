@@ -41,7 +41,7 @@ public final class FormUtil {
 
         form.getPdfObject().remove(PdfName.NeedAppearances);
         PdfString defaultAppearance = form.getDefaultAppearance();
-        if (defaultAppearance == null || defaultAppearance.toUnicodeString().isBlank()) {
+        if (defaultAppearance == null || !"/Helv 0 Tf 0 g".equals(defaultAppearance.toUnicodeString())) {
             form.setDefaultAppearance("/Helv 0 Tf 0 g");
         }
 
@@ -59,23 +59,46 @@ public final class FormUtil {
 
         ensureFontResource(document, fonts, HELV_FONT_NAME, StandardFonts.HELVETICA);
         ensureFontResource(document, fonts, ZADB_FONT_NAME, StandardFonts.ZAPFDINGBATS);
+
+        form.getPdfObject().setModified();
     }
 
     private static void ensureFontResource(PdfDocument document,
                                            PdfDictionary fonts,
                                            PdfName alias,
                                            String fontName) {
-        if (fonts.containsKey(alias)) {
-            return;
+        PdfDictionary existing = fonts.getAsDictionary(alias);
+        if (!isValidFontDictionary(existing)) {
+            fonts.remove(alias);
+            try {
+                PdfFont font = PdfFontFactory.createFont(fontName);
+                font.makeIndirect(document);
+                fonts.put(alias, font.getPdfObject());
+            } catch (Exception e) {
+                throw new IllegalStateException("Unable to add font resource '" + fontName + "'", e);
+            }
+        }
+    }
+
+    private static boolean isValidFontDictionary(PdfDictionary fontDictionary) {
+        if (fontDictionary == null) {
+            return false;
         }
 
-        try {
-            PdfFont font = PdfFontFactory.createFont(fontName);
-            font.makeIndirect(document);
-            fonts.put(alias, font.getPdfObject());
-        } catch (Exception e) {
-            throw new IllegalStateException("Unable to add font resource '" + fontName + "'", e);
+        PdfName type = fontDictionary.getAsName(PdfName.Type);
+        if (type != null && !PdfName.Font.equals(type)) {
+            return false;
         }
+
+        PdfName subtype = fontDictionary.getAsName(PdfName.Subtype);
+        if (subtype == null) {
+            return false;
+        }
+
+        boolean hasBaseFont = fontDictionary.getAsName(PdfName.BaseFont) != null;
+        boolean hasDescriptor = fontDictionary.getAsDictionary(PdfName.FontDescriptor) != null;
+
+        return hasBaseFont || hasDescriptor;
     }
 
     public static PdfWidgetAnnotation ensurePrintableSignatureWidget(PdfSignatureFormField field,
