@@ -49,25 +49,38 @@ public final class FormUtil {
 
         List<PdfWidgetAnnotation> widgets = field.getWidgets();
         if (widgets == null || widgets.isEmpty()) {
-            PdfWidgetAnnotation widget = new PdfWidgetAnnotation(rect);
-            widget.setPage(page);
-            field.addKid(widget);
+            field.setWidget(rect, page);
             widgets = field.getWidgets();
         }
 
         PdfWidgetAnnotation widget = widgets.get(0);
+        PdfDictionary widgetObject = widget.getPdfObject();
+        PdfDictionary fieldObject = field.getPdfObject();
+
+        widgetObject.put(PdfName.Subtype, PdfName.Widget);
+
         float[] rectCoords = new float[]{rect.getLeft(), rect.getBottom(), rect.getRight(), rect.getTop()};
         widget.setRectangle(new PdfArray(rectCoords));
         widget.setPage(page);
-        widget.getPdfObject().put(PdfName.P, page.getPdfObject());
+        widgetObject.put(PdfName.P, page.getPdfObject());
+
+        widgetObject.put(PdfName.Parent, fieldObject);
+        PdfArray kids = fieldObject.getAsArray(PdfName.Kids);
+        if (kids == null) {
+            kids = new PdfArray();
+            fieldObject.put(PdfName.Kids, kids);
+        }
+        if (!containsDictionaryReference(kids, widgetObject)) {
+            kids.add(widgetObject);
+        }
 
         PdfArray annots = page.getPdfObject().getAsArray(PdfName.Annots);
         if (annots == null) {
             annots = new PdfArray();
             page.getPdfObject().put(PdfName.Annots, annots);
         }
-        if (!containsAnnotationReference(annots, widget)) {
-            annots.add(widget.getPdfObject());
+        if (!containsDictionaryReference(annots, widgetObject)) {
+            annots.add(widgetObject);
         }
 
         int flags = widget.getFlags();
@@ -114,21 +127,20 @@ public final class FormUtil {
         widget.setAppearanceState(PdfName.N);
     }
 
-    private static boolean containsAnnotationReference(PdfArray annots, PdfWidgetAnnotation widget) {
-        if (annots == null || widget == null) {
+    private static boolean containsDictionaryReference(PdfArray array, PdfDictionary dictionary) {
+        if (array == null || dictionary == null) {
             return false;
         }
-        PdfDictionary widgetObject = widget.getPdfObject();
-        for (int i = 0; i < annots.size(); i++) {
-            PdfDictionary candidate = annots.getAsDictionary(i);
+        for (int i = 0; i < array.size(); i++) {
+            PdfDictionary candidate = array.getAsDictionary(i);
             if (candidate == null) {
                 continue;
             }
-            if (candidate.getIndirectReference() != null && widgetObject.getIndirectReference() != null
-                    && candidate.getIndirectReference().equals(widgetObject.getIndirectReference())) {
+            if (candidate.getIndirectReference() != null && dictionary.getIndirectReference() != null
+                    && candidate.getIndirectReference().equals(dictionary.getIndirectReference())) {
                 return true;
             }
-            if (candidate.equals(widgetObject)) {
+            if (candidate.equals(dictionary)) {
                 return true;
             }
         }
