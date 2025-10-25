@@ -93,6 +93,18 @@ public final class SignatureDiagnostics {
             throw new IllegalStateException("Field /V is null for signature " + sigName);
         }
 
+        PdfDictionary acroDict = acro.getPdfObject();
+        PdfArray acroFieldsArray = acroDict != null ? acroDict.getAsArray(PdfName.Fields) : null;
+        PdfArray pageAnnotsArray = widgetPage != null ? widgetPage.getPdfObject().getAsArray(PdfName.Annots) : null;
+
+        Integer acroObjNumber = getObjectNumber(acroDict);
+        Integer acroFieldsObjNumber = getObjectNumber(acroFieldsArray);
+        Integer fieldObjNumber = getObjectNumber(fieldDict);
+        Integer sigObjNumber = getObjectNumber(sigDict);
+        Integer widgetObjNumber = widget != null ? getObjectNumber(widget.getPdfObject()) : null;
+        Integer pageObjNumber = widgetPage != null ? getObjectNumber(widgetPage.getPdfObject()) : null;
+        Integer annotsObjNumber = getObjectNumber(pageAnnotsArray);
+
         PdfName type = sigDict.getAsName(PdfName.Type);
         if (!PdfName.Sig.equals(type)) {
             String actual = type != null ? "/" + type.getValue() : "null";
@@ -261,7 +273,14 @@ public final class SignatureDiagnostics {
                 widgetHidden,
                 widgetInAnnots,
                 widgetHasAppearance,
-                subject);
+                subject,
+                acroObjNumber,
+                acroFieldsObjNumber,
+                fieldObjNumber,
+                sigObjNumber,
+                widgetObjNumber,
+                pageObjNumber,
+                annotsObjNumber);
     }
 
     private static PdfWidgetAnnotation selectWidget(List<PdfWidgetAnnotation> widgets) {
@@ -360,6 +379,13 @@ public final class SignatureDiagnostics {
         private final boolean widgetInAnnots;
         private final boolean widgetHasAppearance;
         private final String signingCertificateSubject;
+        private final Integer acroFormObjectNumber;
+        private final Integer acroFormFieldsObjectNumber;
+        private final Integer fieldObjectNumber;
+        private final Integer signatureDictionaryObjectNumber;
+        private final Integer widgetObjectNumber;
+        private final Integer widgetPageObjectNumber;
+        private final Integer annotsArrayObjectNumber;
 
         SignatureCheckResult(String name, PdfName filter, PdfName subFilter, boolean filterAllowed,
                               boolean pkcs7Parsed, boolean pkcs7Valid, String pkcs7Error,
@@ -368,7 +394,11 @@ public final class SignatureDiagnostics {
                               boolean contentsDecoded, long contentsHexLength, boolean adobeVisibleMinimal,
                               List<String> adobeVisibilityIssues, int pageNumber, Rectangle widgetRect,
                               int widgetFlags, boolean widgetPrintable, boolean widgetHidden,
-                              boolean widgetInAnnots, boolean widgetHasAppearance, String signingCertificateSubject) {
+                              boolean widgetInAnnots, boolean widgetHasAppearance, String signingCertificateSubject,
+                              Integer acroFormObjectNumber, Integer acroFormFieldsObjectNumber,
+                              Integer fieldObjectNumber, Integer signatureDictionaryObjectNumber,
+                              Integer widgetObjectNumber, Integer widgetPageObjectNumber,
+                              Integer annotsArrayObjectNumber) {
             this.name = name;
             this.filter = filter;
             this.subFilter = subFilter;
@@ -394,6 +424,13 @@ public final class SignatureDiagnostics {
             this.widgetInAnnots = widgetInAnnots;
             this.widgetHasAppearance = widgetHasAppearance;
             this.signingCertificateSubject = signingCertificateSubject;
+            this.acroFormObjectNumber = acroFormObjectNumber;
+            this.acroFormFieldsObjectNumber = acroFormFieldsObjectNumber;
+            this.fieldObjectNumber = fieldObjectNumber;
+            this.signatureDictionaryObjectNumber = signatureDictionaryObjectNumber;
+            this.widgetObjectNumber = widgetObjectNumber;
+            this.widgetPageObjectNumber = widgetPageObjectNumber;
+            this.annotsArrayObjectNumber = annotsArrayObjectNumber;
         }
 
         public String getName() {
@@ -496,6 +533,34 @@ public final class SignatureDiagnostics {
             return signingCertificateSubject;
         }
 
+        public Integer getAcroFormObjectNumber() {
+            return acroFormObjectNumber;
+        }
+
+        public Integer getAcroFormFieldsObjectNumber() {
+            return acroFormFieldsObjectNumber;
+        }
+
+        public Integer getFieldObjectNumber() {
+            return fieldObjectNumber;
+        }
+
+        public Integer getSignatureDictionaryObjectNumber() {
+            return signatureDictionaryObjectNumber;
+        }
+
+        public Integer getWidgetObjectNumber() {
+            return widgetObjectNumber;
+        }
+
+        public Integer getWidgetPageObjectNumber() {
+            return widgetPageObjectNumber;
+        }
+
+        public Integer getAnnotsArrayObjectNumber() {
+            return annotsArrayObjectNumber;
+        }
+
         public String formatByteRange() {
             if (byteRange == null || byteRange.length != 4) {
                 return "<invalid>";
@@ -515,5 +580,12 @@ public final class SignatureDiagnostics {
             }
         }
         return certificate != null ? certificate.toString() : null;
+    }
+
+    private static Integer getObjectNumber(PdfObject object) {
+        if (object == null || object.getIndirectReference() == null) {
+            return null;
+        }
+        return object.getIndirectReference().getObjNumber();
     }
 }
