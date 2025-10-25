@@ -45,6 +45,9 @@ public class SignatureVerifier {
             if (acro == null) {
                 throw new IllegalStateException("No AcroForm present in PDF: " + path);
             }
+            PdfDictionary acroDict = acro.getPdfObject();
+            boolean acroHasXfa = acroDict != null && acroDict.get(PdfName.XFA) != null;
+            System.out.println("AcroForm has /XFA: " + acroHasXfa);
             SignatureUtil su = new SignatureUtil(pdf);
 
             List<String> names = su.getSignatureNames();
@@ -106,6 +109,9 @@ public class SignatureVerifier {
                         + ", rect=" + result.getWidgetRect()
                         + ", AP(N)=" + result.hasWidgetAppearance()
                         + ", inAnnots=" + result.isWidgetInAnnots());
+                if (result.isAcroFormHasXfa()) {
+                    System.out.println("     NOTE: AcroForm has /XFA entry; Acrobat may use XFA engine and hide AcroForm signatures");
+                }
                 System.out.println("     ADOBE_REACHABLE: " + reachability.isReachable());
                 if (!reachability.isReachable()) {
                     System.out.println("       Missing in latest revision xref: "
