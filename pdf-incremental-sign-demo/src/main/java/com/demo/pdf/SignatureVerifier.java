@@ -5,32 +5,41 @@ import com.itextpdf.forms.PdfAcroForm;
 import com.itextpdf.kernel.pdf.PdfArray;
 import com.itextpdf.kernel.pdf.PdfDictionary;
 import com.itextpdf.kernel.pdf.PdfDocument;
+import com.itextpdf.kernel.pdf.PdfIndirectReference;
 import com.itextpdf.kernel.pdf.PdfName;
 import com.itextpdf.kernel.pdf.PdfObject;
 import com.itextpdf.kernel.pdf.PdfReader;
 import com.itextpdf.kernel.pdf.PdfString;
+import com.itextpdf.kernel.pdf.PdfXrefTable;
 import com.itextpdf.signatures.SignatureUtil;
 
 import com.itextpdf.kernel.geom.Rectangle;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 public class SignatureVerifier {
 
     public static int verify(String path) throws Exception {
-        return runVerification(path, false);
+        return runVerification(path, false, false);
     }
 
     public static int deepVerify(String path) throws Exception {
-        return runVerification(path, true);
+        return runVerification(path, true, false);
     }
 
-    private static int runVerification(String path, boolean deepMode) throws Exception {
+    private static int runVerification(String path, boolean deepMode, boolean strictTail) throws Exception {
         DemoKeystoreUtil.ensureProvider();
         Path pdfPath = Path.of(path);
         PdfSanityUtil.requireHeader(pdfPath);
-        PostSignValidator.strictTailCheck(pdfPath);
+        PostSignValidator.TailInfo tailInfo = PostSignValidator.strictTailCheck(pdfPath, strictTail);
+        if (tailInfo.getType() != null) {
+            System.out.printf("[tail] Using %s at offset %d (declared %d)%n",
+                    tailInfo.getType(), tailInfo.getActualOffset(), tailInfo.getDeclaredOffset());
+        }
         try (PdfDocument pdf = new PdfDocument(new PdfReader(path))) {
             PdfAcroForm acro = PdfAcroForm.getAcroForm(pdf, false);
             if (acro == null) {
@@ -46,9 +55,11 @@ public class SignatureVerifier {
                 throw new IllegalStateException("No field-bound signatures found (Adobe panel will be empty).");
             }
 
+            Set<Integer> reachable = buildLatestReachableSet(pdf);
             for (String name : names) {
                 SignatureDiagnostics.SignatureCheckResult result =
                         SignatureDiagnostics.inspectSignature(pdfPath, pdf, su, acro, name);
+                ReachabilityResult reachability = evaluateReachability(result, reachable);
 
                 int rowIndex = SignatureDiagnostics.extractRowIndex(name);
                 if (rowIndex > 0) {
@@ -76,6 +87,7 @@ public class SignatureVerifier {
                         contHexOk,
                         result.isByteRangeCoverageOk(),
                         result.isFilterAllowed());
+                System.out.println("     ADOBE_VISIBLE_MINIMAL: " + result.isAdobeVisibleMinimalStructure());
                 if (!result.isAdobeVisibleMinimalStructure()) {
                     for (String reason : result.getAdobeVisibilityIssues()) {
                         System.out.println("       - " + reason);
@@ -94,11 +106,26 @@ public class SignatureVerifier {
                         + ", rect=" + result.getWidgetRect()
                         + ", AP(N)=" + result.hasWidgetAppearance()
                         + ", inAnnots=" + result.isWidgetInAnnots());
+                System.out.println("     ADOBE_REACHABLE: " + reachability.isReachable());
+                if (!reachability.isReachable()) {
+                    System.out.println("       Missing in latest revision xref: "
+                            + String.join(", ", reachability.getMissingDescriptions()));
+                    System.out.println("     Acrobat will not show this signature: objects not reachable in the latest revision ("
+                            + String.join("/", reachability.getMissingLabels()) + ")");
+                }
                 if (deepMode) {
-                    String verdict = result.isAdobeVisibleMinimalStructure()
-                            ? "WILL be shown by Acrobat"
-                            : "WILL NOT be shown by Acrobat";
-                    System.out.println("     => This signature " + verdict + " (based on minimal structure checks)");
+                    boolean minimal = result.isAdobeVisibleMinimalStructure();
+                    boolean reachableVerdict = reachability.isReachable();
+                    String verdict;
+                    if (minimal && reachableVerdict) {
+                        verdict = "WILL be shown by Acrobat";
+                    } else if (!reachableVerdict) {
+                        verdict = "WILL NOT be shown by Acrobat (objects unreachable)";
+                    } else {
+                        verdict = "WILL NOT be shown by Acrobat (minimal structure failure)";
+                    }
+                    System.out.println("     => This signature " + verdict
+                            + " (based on structure and reachability checks)");
                 }
             }
             return 0;
@@ -158,25 +185,102 @@ public class SignatureVerifier {
     }
 
     public static void main(String[] args) throws Exception {
-        if (args.length == 0) {
+        boolean strictTail = false;
+        List<String> positional = new ArrayList<>();
+        for (String arg : args) {
+            if ("--strict-tail".equals(arg)) {
+                strictTail = true;
+            } else {
+                positional.add(arg);
+            }
+        }
+
+        if (positional.isEmpty()) {
             System.err.println("Usage:");
-            System.err.println("  java ... SignatureVerifier <pdf>");
-            System.err.println("  java ... SignatureVerifier dump-acroform <pdf>");
-            System.err.println("  java ... SignatureVerifier deep-verify <pdf>");
+            System.err.println("  java ... SignatureVerifier [--strict-tail] <pdf>");
+            System.err.println("  java ... SignatureVerifier [--strict-tail] dump-acroform <pdf>");
+            System.err.println("  java ... SignatureVerifier [--strict-tail] deep-verify <pdf>");
             System.exit(2);
         }
 
-        if (args.length == 2 && "dump-acroform".equals(args[0])) {
-            dumpCatalogAndAcroForm(args[1]);
+        if (positional.size() == 2 && "dump-acroform".equals(positional.get(0))) {
+            dumpCatalogAndAcroForm(positional.get(1));
             return;
         }
 
-        if (args.length == 2 && "deep-verify".equals(args[0])) {
-            int code = deepVerify(args[1]);
+        if (positional.size() == 2 && "deep-verify".equals(positional.get(0))) {
+            int code = runVerification(positional.get(1), true, strictTail);
             System.exit(code);
         }
 
-        int code = verify(args[0]);
+        if (positional.size() != 1) {
+            System.err.println("Unexpected arguments: " + positional);
+            System.exit(2);
+        }
+
+        int code = runVerification(positional.get(0), false, strictTail);
         System.exit(code);
+    }
+
+    public static Set<Integer> buildLatestReachableSet(PdfDocument pdf) {
+        Set<Integer> reachable = new HashSet<>();
+        PdfXrefTable xref = pdf.getXref();
+        int count = xref.getCountOfIndirectObjects();
+        for (int i = 0; i < count; i++) {
+            PdfIndirectReference ref = xref.get(i);
+            if (ref != null && !ref.isFree()) {
+                reachable.add(ref.getObjNumber());
+            }
+        }
+        return reachable;
+    }
+
+    public static ReachabilityResult evaluateReachability(SignatureDiagnostics.SignatureCheckResult result,
+                                                           Set<Integer> reachable) {
+        List<String> missingDescriptions = new ArrayList<>();
+        List<String> missingLabels = new ArrayList<>();
+        collectMissing(result.getAcroFormObjectNumber(), "acroform", reachable, missingDescriptions, missingLabels);
+        collectMissing(result.getAcroFormFieldsObjectNumber(), "acroformFields", reachable, missingDescriptions, missingLabels);
+        collectMissing(result.getFieldObjectNumber(), "field", reachable, missingDescriptions, missingLabels);
+        collectMissing(result.getSignatureDictionaryObjectNumber(), "signatureV", reachable, missingDescriptions, missingLabels);
+        collectMissing(result.getWidgetObjectNumber(), "widget", reachable, missingDescriptions, missingLabels);
+        collectMissing(result.getWidgetPageObjectNumber(), "page", reachable, missingDescriptions, missingLabels);
+        collectMissing(result.getAnnotsArrayObjectNumber(), "annots", reachable, missingDescriptions, missingLabels);
+        return new ReachabilityResult(missingDescriptions.isEmpty(), missingDescriptions, missingLabels);
+    }
+
+    private static void collectMissing(Integer objNumber, String label, Set<Integer> reachable,
+                                       List<String> missingDescriptions, List<String> missingLabels) {
+        if (objNumber == null) {
+            return;
+        }
+        if (!reachable.contains(objNumber)) {
+            missingDescriptions.add(label + " obj#=" + objNumber);
+            missingLabels.add(label);
+        }
+    }
+
+    public static final class ReachabilityResult {
+        private final boolean reachable;
+        private final List<String> missingDescriptions;
+        private final List<String> missingLabels;
+
+        ReachabilityResult(boolean reachable, List<String> missingDescriptions, List<String> missingLabels) {
+            this.reachable = reachable;
+            this.missingDescriptions = List.copyOf(missingDescriptions);
+            this.missingLabels = List.copyOf(missingLabels);
+        }
+
+        public boolean isReachable() {
+            return reachable;
+        }
+
+        public List<String> getMissingDescriptions() {
+            return missingDescriptions;
+        }
+
+        public List<String> getMissingLabels() {
+            return missingLabels;
+        }
     }
 }

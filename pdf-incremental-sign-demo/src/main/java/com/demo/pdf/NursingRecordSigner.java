@@ -623,6 +623,13 @@ public final class NursingRecordSigner {
                 throw new IllegalStateException("Signature minimal structure invalid after signing: "
                         + String.join("; ", result.getAdobeVisibilityIssues()));
             }
+            Set<Integer> reachable = SignatureVerifier.buildLatestReachableSet(pdf);
+            SignatureVerifier.ReachabilityResult reachability =
+                    SignatureVerifier.evaluateReachability(result, reachable);
+            if (!reachability.isReachable()) {
+                throw new IllegalStateException("Signature objects not reachable in latest revision: "
+                        + String.join(", ", reachability.getMissingDescriptions()));
+            }
             if (result.getWidgetRect() == null) {
                 throw new IllegalStateException("Signature widget rectangle unavailable for " + sigName);
             }
