@@ -224,7 +224,7 @@ public class SignatureVerifier {
                                 vDict.getAsName(PdfName.Filter),
                                 vDict.getAsName(PdfName.SubFilter));
                     }
-                    PdfFormField asField = PdfFormField.makeFormField(f);
+                    PdfFormField asField = PdfFormField.makeFormField(f, doc);
                     if (asField instanceof PdfSignatureFormField) {
                         PdfSignatureFormField sigField = (PdfSignatureFormField) asField;
 
