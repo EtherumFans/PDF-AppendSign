@@ -94,6 +94,7 @@ public final class SignatureDiagnostics {
         }
 
         PdfDictionary acroDict = acro.getPdfObject();
+        boolean acroHasXfa = acroDict != null && acroDict.get(PdfName.XFA) != null;
         PdfArray acroFieldsArray = acroDict != null ? acroDict.getAsArray(PdfName.Fields) : null;
         PdfArray pageAnnotsArray = widgetPage != null ? widgetPage.getPdfObject().getAsArray(PdfName.Annots) : null;
 
@@ -115,6 +116,9 @@ public final class SignatureDiagnostics {
         PdfName subFilter = sigDict.getAsName(PdfName.SubFilter);
 
         List<String> adobeVisibilityIssues = new ArrayList<>();
+        if (acroHasXfa) {
+            adobeVisibilityIssues.add("AcroForm has /XFA entry; Acrobat may not list AcroForm signatures");
+        }
 
         boolean filterAllowed = true;
         if (!PdfName.Adobe_PPKLite.equals(filter)) {
@@ -218,7 +222,7 @@ public final class SignatureDiagnostics {
         }
 
         boolean adobeVisible = byteRangeShapeOk && byteRangeOffsetsOk && byteRangeCoverageOk
-                && contentsHex && contentsEvenLength && filterAllowed;
+                && contentsHex && contentsEvenLength && filterAllowed && !acroHasXfa;
 
         boolean pkcs7Parsed = false;
         boolean pkcs7Valid = false;
@@ -273,6 +277,7 @@ public final class SignatureDiagnostics {
                 widgetHidden,
                 widgetInAnnots,
                 widgetHasAppearance,
+                acroHasXfa,
                 subject,
                 acroObjNumber,
                 acroFieldsObjNumber,
@@ -378,6 +383,7 @@ public final class SignatureDiagnostics {
         private final boolean widgetHidden;
         private final boolean widgetInAnnots;
         private final boolean widgetHasAppearance;
+        private final boolean acroFormHasXfa;
         private final String signingCertificateSubject;
         private final Integer acroFormObjectNumber;
         private final Integer acroFormFieldsObjectNumber;
@@ -394,7 +400,8 @@ public final class SignatureDiagnostics {
                               boolean contentsDecoded, long contentsHexLength, boolean adobeVisibleMinimal,
                               List<String> adobeVisibilityIssues, int pageNumber, Rectangle widgetRect,
                               int widgetFlags, boolean widgetPrintable, boolean widgetHidden,
-                              boolean widgetInAnnots, boolean widgetHasAppearance, String signingCertificateSubject,
+                              boolean widgetInAnnots, boolean widgetHasAppearance, boolean acroFormHasXfa,
+                              String signingCertificateSubject,
                               Integer acroFormObjectNumber, Integer acroFormFieldsObjectNumber,
                               Integer fieldObjectNumber, Integer signatureDictionaryObjectNumber,
                               Integer widgetObjectNumber, Integer widgetPageObjectNumber,
@@ -423,6 +430,7 @@ public final class SignatureDiagnostics {
             this.widgetHidden = widgetHidden;
             this.widgetInAnnots = widgetInAnnots;
             this.widgetHasAppearance = widgetHasAppearance;
+            this.acroFormHasXfa = acroFormHasXfa;
             this.signingCertificateSubject = signingCertificateSubject;
             this.acroFormObjectNumber = acroFormObjectNumber;
             this.acroFormFieldsObjectNumber = acroFormFieldsObjectNumber;
@@ -527,6 +535,10 @@ public final class SignatureDiagnostics {
 
         public boolean hasWidgetAppearance() {
             return widgetHasAppearance;
+        }
+
+        public boolean isAcroFormHasXfa() {
+            return acroFormHasXfa;
         }
 
         public String getSigningCertificateSubject() {
