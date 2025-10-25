@@ -49,7 +49,9 @@ public final class FormUtil {
 
         List<PdfWidgetAnnotation> widgets = field.getWidgets();
         if (widgets == null || widgets.isEmpty()) {
-            field.setWidget(rect, page);
+            PdfWidgetAnnotation widgetAnnotation = new PdfWidgetAnnotation(rect);
+            widgetAnnotation.setPage(page);
+            field.addKid(widgetAnnotation);
             widgets = field.getWidgets();
         }
 
