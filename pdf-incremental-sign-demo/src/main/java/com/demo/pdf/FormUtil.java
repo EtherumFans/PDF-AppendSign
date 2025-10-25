@@ -2,14 +2,17 @@ package com.demo.pdf;
 
 import com.itextpdf.forms.PdfAcroForm;
 import com.itextpdf.forms.fields.PdfSignatureFormField;
+import com.itextpdf.io.font.constants.StandardFonts;
 import com.itextpdf.kernel.colors.ColorConstants;
+import com.itextpdf.kernel.font.PdfFont;
+import com.itextpdf.kernel.font.PdfFontFactory;
 import com.itextpdf.kernel.geom.Rectangle;
 import com.itextpdf.kernel.pdf.PdfArray;
-import com.itextpdf.kernel.pdf.PdfBoolean;
 import com.itextpdf.kernel.pdf.PdfDictionary;
 import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfName;
 import com.itextpdf.kernel.pdf.PdfPage;
+import com.itextpdf.kernel.pdf.PdfString;
 import com.itextpdf.kernel.pdf.annot.PdfAnnotation;
 import com.itextpdf.kernel.pdf.annot.PdfWidgetAnnotation;
 import com.itextpdf.kernel.pdf.canvas.PdfCanvas;
@@ -19,18 +22,59 @@ import java.util.List;
 
 public final class FormUtil {
 
+    private static final PdfName HELV_FONT_NAME = new PdfName("Helv");
+    private static final PdfName ZADB_FONT_NAME = new PdfName("ZaDb");
+
     private FormUtil() {
     }
 
     public static PdfAcroForm prepareAcroForm(PdfDocument document) {
         PdfAcroForm form = PdfAcroForm.getAcroForm(document, true);
-        ensureNeedAppearances(form);
+        ensureAcroFormAppearanceDefaults(document, form);
         return form;
     }
 
-    public static void ensureNeedAppearances(PdfAcroForm form) {
-        if (form != null && form.getPdfObject().getAsName(PdfName.DA) == null) {
-            form.getPdfObject().put(PdfName.NeedAppearances, PdfBoolean.TRUE);
+    public static void ensureAcroFormAppearanceDefaults(PdfDocument document, PdfAcroForm form) {
+        if (document == null || form == null) {
+            return;
+        }
+
+        form.getPdfObject().remove(PdfName.NeedAppearances);
+        PdfString defaultAppearance = form.getDefaultAppearance();
+        if (defaultAppearance == null || defaultAppearance.toUnicodeString().isBlank()) {
+            form.setDefaultAppearance(new PdfString("/Helv 0 Tf 0 g"));
+        }
+
+        PdfDictionary dr = form.getPdfObject().getAsDictionary(PdfName.DR);
+        if (dr == null) {
+            dr = new PdfDictionary();
+            form.getPdfObject().put(PdfName.DR, dr);
+        }
+
+        PdfDictionary fonts = dr.getAsDictionary(PdfName.Font);
+        if (fonts == null) {
+            fonts = new PdfDictionary();
+            dr.put(PdfName.Font, fonts);
+        }
+
+        ensureFontResource(document, fonts, HELV_FONT_NAME, StandardFonts.HELVETICA);
+        ensureFontResource(document, fonts, ZADB_FONT_NAME, StandardFonts.ZAPFDINGBATS);
+    }
+
+    private static void ensureFontResource(PdfDocument document,
+                                           PdfDictionary fonts,
+                                           PdfName alias,
+                                           String fontName) {
+        if (fonts.containsKey(alias)) {
+            return;
+        }
+
+        try {
+            PdfFont font = PdfFontFactory.createFont(fontName);
+            font.makeIndirect(document);
+            fonts.put(alias, font.getPdfObject());
+        } catch (Exception e) {
+            throw new IllegalStateException("Unable to add font resource '" + fontName + "'", e);
         }
     }
 

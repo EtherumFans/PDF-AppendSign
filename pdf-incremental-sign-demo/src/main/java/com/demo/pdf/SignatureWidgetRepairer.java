@@ -48,6 +48,7 @@ public final class SignatureWidgetRepairer {
                 System.out.println("[fix-widgets] No AcroForm present; nothing to repair");
                 return;
             }
+            FormUtil.ensureAcroFormAppearanceDefaults(pdf, acro);
             Map<String, PdfFormField> fields = acro.getFormFields();
             if (fields.isEmpty()) {
                 System.out.println("[fix-widgets] AcroForm has no fields; nothing to repair");
