@@ -354,11 +354,11 @@ public final class ElectronicSignatureSigner {
         } else {
             sigField = PdfSignatureFormField.createSignature(pdfDoc, rect);
             sigField.setFieldName(fieldName);
-            sigField.setDefaultAppearance("/Helv 12 Tf 0 g");
+            FormUtil.setFieldDefaultAppearance(sigField);
             af.addField(sigField, pdfDoc.getPage(pageIndex));
         }
 
-        sigField.setDefaultAppearance("/Helv 12 Tf 0 g");
+        FormUtil.setFieldDefaultAppearance(sigField);
 
         java.util.List<PdfWidgetAnnotation> widgets = sigField.getWidgets();
         PdfWidgetAnnotation widget = widgets != null && !widgets.isEmpty() ? widgets.get(0) : null;
