@@ -10,9 +10,12 @@ import com.itextpdf.io.font.constants.StandardFonts;
 import com.itextpdf.kernel.font.PdfFont;
 import com.itextpdf.kernel.font.PdfFontFactory;
 import com.itextpdf.kernel.geom.Rectangle;
+import com.itextpdf.kernel.pdf.PdfBoolean;
 import com.itextpdf.kernel.pdf.PdfDate;
+import com.itextpdf.kernel.pdf.PdfDictionary;
 import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfName;
+import com.itextpdf.kernel.pdf.PdfObject;
 import com.itextpdf.kernel.pdf.PdfPage;
 import com.itextpdf.kernel.pdf.PdfReader;
 import com.itextpdf.kernel.pdf.PdfString;
@@ -374,6 +377,77 @@ public final class NursingRecordSigner {
                 document.close();
             }
         }
+    }
+
+    // ① 打印 AcroForm 的 DA/DR 与每个字体条目是否真的是 Type=Font（用于定位）
+    private static void dumpAcroFormFonts(PdfDocument doc, String tag) {
+        PdfDictionary acro = doc.getCatalog().getPdfObject().getAsDictionary(PdfName.AcroForm);
+        System.out.println("=== [dumpAcroFormFonts] " + tag + " ===");
+        if (acro == null) { System.out.println("No AcroForm."); return; }
+        System.out.println("DA: " + acro.get(PdfName.DA));
+        PdfBoolean na = acro.getAsBoolean(PdfName.NeedAppearances);
+        System.out.println("NeedAppearances: " + (na != null && na.getValue()));
+
+        PdfDictionary dr = acro.getAsDictionary(PdfName.DR);
+        System.out.println("DR present: " + (dr != null));
+        PdfDictionary fonts = (dr != null) ? dr.getAsDictionary(PdfName.Font) : null;
+        if (fonts == null) { System.out.println("DR.Font: null"); return; }
+
+        System.out.println("DR.Font keys: " + fonts.keySet());
+        for (PdfName key : fonts.keySet()) {
+            PdfObject fo = fonts.get(key);
+            PdfDictionary fd = fo instanceof PdfDictionary ? (PdfDictionary) fo : null;
+            PdfName type = (fd != null) ? fd.getAsName(PdfName.Type) : null;
+            PdfName subtype = (fd != null) ? fd.getAsName(PdfName.Subtype) : null;
+            System.out.println("  - " + key + " -> isDict=" + (fd != null)
+                    + ", Type=" + type + ", Subtype=" + subtype);
+        }
+    }
+
+    // ② 规范化 AcroForm 的 DA/DR（在创建任何字段前调用）
+    //    - 移除 NeedAppearances
+    //    - DR.Font 中注册 Helv、F1(指向 Helv)、ZaDb
+    //    - 将 DA 设为 /Helv 12 Tf 0 g
+    //    - 若发现 DR.Font 某些键不是 Type/Font 字典，直接清除再重建
+    private static PdfFont ensureAcroFormDA_DR(PdfDocument doc) throws IOException {
+        PdfAcroForm af = PdfAcroForm.getAcroForm(doc, true);
+
+        // 关掉 NeedAppearances 避免外观重算引发更多依赖
+        af.getPdfObject().remove(PdfName.NeedAppearances);
+
+        PdfDictionary dr = af.getPdfObject().getAsDictionary(PdfName.DR);
+        if (dr == null) { dr = new PdfDictionary(); af.getPdfObject().put(PdfName.DR, dr); }
+        PdfDictionary fonts = dr.getAsDictionary(PdfName.Font);
+        if (fonts == null) { fonts = new PdfDictionary(); dr.put(PdfName.Font, fonts); }
+
+        // 清理掉不是 Type/Font 的脏条目（尤其是 F1 等旧别名）
+        java.util.List<PdfName> toRemove = new java.util.ArrayList<>();
+        for (PdfName key : fonts.keySet()) {
+            PdfObject fo = fonts.get(key);
+            PdfDictionary fd = fo instanceof PdfDictionary ? (PdfDictionary) fo : null;
+            PdfName type = (fd != null) ? fd.getAsName(PdfName.Type) : null;
+            if (type == null || !PdfName.Font.equals(type)) {
+                toRemove.add(key);
+            }
+        }
+        for (PdfName key : toRemove) fonts.remove(key);
+
+        // 注册标准字体（不依赖外部文件）
+        PdfFont helv = PdfFontFactory.createFont(com.itextpdf.io.font.constants.StandardFonts.HELVETICA);
+        PdfFont zapf = PdfFontFactory.createFont(com.itextpdf.io.font.constants.StandardFonts.ZAPFDINGBATS);
+
+        // 用 iText 的规范姿势把字体挂到 DR：确保是同一文档下的对象
+        // （直接 put 也可以，这里稳妥一点）
+        fonts.put(new PdfName("Helv"), helv.getPdfObject());
+        fonts.put(new PdfName("F1"),   helv.getPdfObject()); // 兼容旧 DA="/F1 12 Tf"
+        fonts.put(new PdfName("ZaDb"), zapf.getPdfObject());
+
+        // 设默认外观：用 Helv（注意别名要与上面一致）
+        af.setDefaultAppearance(new PdfString("/Helv 12 Tf 0 g"));
+
+        af.setSignatureFlags(PdfAcroForm.SIGNATURE_EXIST | PdfAcroForm.APPEND_ONLY);
+        af.setModified();
+        return helv;
     }
 
     private static SigningMode resolveMode(SigningMode requestedMode, PdfAcroForm form, String timeName, String textName,
