@@ -141,10 +141,10 @@ public final class PdfAcroformNormalizer {
         }
 
         if (f.cjk != null) {
-            af.setDefaultAppearance(new PdfString("/CJK 12 Tf 0 g"));
+            af.setDefaultAppearance("/CJK 12 Tf 0 g");
             f.daAlias = "/CJK";
         } else {
-            af.setDefaultAppearance(new PdfString("/Helv 12 Tf 0 g"));
+            af.setDefaultAppearance("/Helv 12 Tf 0 g");
             f.daAlias = "/Helv";
         }
 
