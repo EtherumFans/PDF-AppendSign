@@ -5,6 +5,9 @@ import com.demo.pdf.ElectronicSignatureSigner;
 import com.demo.pdf.NursingRecordSigner;
 import com.demo.pdf.NursingRecordTemplate;
 import com.demo.pdf.PdfStructureDebugger;
+import com.demo.pdf.PdfStructureDiff;
+import com.demo.pdf.PdfStructureDump;
+import com.demo.pdf.PostSignSanitizer;
 import com.demo.pdf.SignatureVerifier;
 import com.demo.pdf.SignatureWidgetRepairer;
 import picocli.CommandLine;
@@ -91,8 +94,10 @@ public class App {
                     CreateTemplate.class,
                     SignRow.class,
                     VerifyPdf.class,
+                    CompareStructure.class,
                     DebugStructure.class,
                     FixWidgets.class,
+                    SanitizeAcroform.class,
                     SignElectronic.class,
                     Certify.class,
                     GenDemoP12.class
@@ -300,4 +305,42 @@ public class App {
             return 0;
         }
     }
+
+    @CommandLine.Command(name = "compare-structure", description = "Diff test PDF against golden PDF (Acrobat-friendly)")
+    static class CompareStructure implements Callable<Integer> {
+        @CommandLine.Option(names = "--gold", required = true, description = "Reference PDF with Acrobat-friendly structure")
+        private Path gold;
+
+        @CommandLine.Option(names = "--test", required = true, description = "Test PDF to compare against the golden reference")
+        private Path test;
+
+        @Override
+        public Integer call() throws Exception {
+            PdfStructureDump golden = PdfStructureDump.load(gold);
+            PdfStructureDump candidate = PdfStructureDump.load(test);
+            PdfStructureDiff.DiffResult diff = PdfStructureDiff.diff(golden, candidate);
+            diff.printTo(System.out);
+            return PdfStructureDiff.hasAcrobatBlockers(candidate) ? 2 : 0;
+        }
+    }
+
+    @CommandLine.Command(name = "sanitize-acroform", description = "Normalize AcroForm/Widgets for Acrobat visibility (append-only)")
+    static class SanitizeAcroform implements Callable<Integer> {
+        @CommandLine.Option(names = "--src", required = true, description = "Source PDF to sanitize")
+        private Path src;
+
+        @CommandLine.Option(names = "--dest", required = true, description = "Destination PDF written with append-only fixes")
+        private Path dest;
+
+        @CommandLine.Option(names = "--field", required = false, description = "Signature field name to ensure exists", defaultValue = "sig_row_1")
+        private String fieldName;
+
+        @Override
+        public Integer call() throws Exception {
+            new PostSignSanitizer().sanitize(src, dest, fieldName);
+            return 0;
+        }
+    }
+
 }
+
