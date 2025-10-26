@@ -28,6 +28,8 @@ public final class FormUtil {
     private static final PdfName F1_FONT_NAME = new PdfName("F1");
     private static final PdfName ZADB_FONT_NAME = new PdfName("ZaDb");
     public static final String DEFAULT_APPEARANCE = "/Helv 12 Tf 0 g";
+    public static final int SIG_FLAG_SIGNATURES_EXIST = 1;
+    public static final int SIG_FLAG_APPEND_ONLY = 1 << 1;
 
     private FormUtil() {
     }
@@ -229,6 +231,25 @@ public final class FormUtil {
 
         widget.setAppearance(PdfName.N, appearance.getPdfObject());
         widget.setAppearanceState(PdfName.N);
+    }
+
+    public static boolean rectanglesIntersect(Rectangle first, Rectangle second) {
+        if (first == null || second == null) {
+            return false;
+        }
+        float firstLeft = Math.min(first.getLeft(), first.getRight());
+        float firstRight = Math.max(first.getLeft(), first.getRight());
+        float firstBottom = Math.min(first.getBottom(), first.getTop());
+        float firstTop = Math.max(first.getBottom(), first.getTop());
+
+        float secondLeft = Math.min(second.getLeft(), second.getRight());
+        float secondRight = Math.max(second.getLeft(), second.getRight());
+        float secondBottom = Math.min(second.getBottom(), second.getTop());
+        float secondTop = Math.max(second.getBottom(), second.getTop());
+
+        boolean horizontalOverlap = firstLeft < secondRight && firstRight > secondLeft;
+        boolean verticalOverlap = firstBottom < secondTop && firstTop > secondBottom;
+        return horizontalOverlap && verticalOverlap;
     }
 
     private static boolean isMergedFieldAndWidget(PdfDictionary fieldObject, PdfDictionary widgetObject) {
