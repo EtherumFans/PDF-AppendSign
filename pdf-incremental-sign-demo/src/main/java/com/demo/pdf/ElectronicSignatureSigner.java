@@ -2,10 +2,14 @@ package com.demo.pdf;
 
 import com.demo.crypto.DemoKeystoreUtil;
 import com.itextpdf.kernel.colors.ColorConstants;
+import com.itextpdf.kernel.font.PdfFont;
 import com.itextpdf.kernel.geom.Rectangle;
+import com.itextpdf.kernel.pdf.PdfArray;
 import com.itextpdf.kernel.pdf.PdfDate;
 import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfName;
+import com.itextpdf.kernel.pdf.PdfDictionary;
+import com.itextpdf.kernel.pdf.PdfObject;
 import com.itextpdf.kernel.pdf.PdfReader;
 import com.itextpdf.kernel.pdf.PdfString;
 import com.itextpdf.kernel.pdf.StampingProperties;
@@ -63,6 +67,8 @@ public final class ElectronicSignatureSigner {
         private String reason = "电子签名";
         private String location = "Ward A";
         private String contact = DEFAULT_CONTACT;
+        private Path cjkFontPath;
+        private boolean debugFonts;
 
         public String getSource() {
             return source;
@@ -183,6 +189,22 @@ public final class ElectronicSignatureSigner {
                 this.contact = contact;
             }
         }
+
+        public Path getCjkFontPath() {
+            return cjkFontPath;
+        }
+
+        public void setCjkFontPath(Path cjkFontPath) {
+            this.cjkFontPath = cjkFontPath;
+        }
+
+        public boolean isDebugFonts() {
+            return debugFonts;
+        }
+
+        public void setDebugFonts(boolean debugFonts) {
+            this.debugFonts = debugFonts;
+        }
     }
 
     public static void sign(Params params) throws Exception {
@@ -227,9 +249,15 @@ public final class ElectronicSignatureSigner {
             if (params.getPage() < 1 || params.getPage() > document.getNumberOfPages()) {
                 throw new IllegalArgumentException("Page " + params.getPage() + " is out of bounds");
             }
-            com.itextpdf.forms.PdfAcroForm acroForm = prepareAcroForm(document);
+            com.itextpdf.forms.PdfAcroForm acroForm = com.itextpdf.forms.PdfAcroForm.getAcroForm(document, true);
+            if (params.isDebugFonts()) {
+                PdfAcroformNormalizer.dumpAcroFormFonts(document, "BEFORE_NORMALIZE");
+            }
             com.itextpdf.forms.fields.PdfSignatureFormField signatureField = ensureSignatureField(
-                    document, acroForm, params.getFieldName(), params.getPage(), rect);
+                    document, acroForm, params.getFieldName(), params.getPage(), rect, params.getCjkFontPath());
+            if (params.isDebugFonts()) {
+                PdfAcroformNormalizer.dumpAcroFormFonts(document, "AFTER_NORMALIZE");
+            }
             ensureFieldNotSigned(document, params.getFieldName());
 
             signer.setFieldName(params.getFieldName());
@@ -330,23 +358,13 @@ public final class ElectronicSignatureSigner {
         canvas.release();
     }
 
-    private static com.itextpdf.forms.PdfAcroForm prepareAcroForm(PdfDocument document) {
-        com.itextpdf.forms.PdfAcroForm acroForm = com.itextpdf.forms.PdfAcroForm.getAcroForm(document, true);
-        FormUtil.ensureAcroFormAppearanceDefaults(document, acroForm);
-        int requiredFlags = com.itextpdf.forms.PdfAcroForm.SIGNATURE_EXIST | com.itextpdf.forms.PdfAcroForm.APPEND_ONLY;
-        int currentFlags = acroForm.getSignatureFlags();
-        if ((currentFlags & requiredFlags) != requiredFlags) {
-            acroForm.setSignatureFlags(currentFlags | requiredFlags);
-            acroForm.getPdfObject().setModified();
-        }
-        return acroForm;
-    }
-
     private static com.itextpdf.forms.fields.PdfSignatureFormField ensureSignatureField(PdfDocument document,
                                                                                        com.itextpdf.forms.PdfAcroForm acroForm,
                                                                                        String fieldName,
                                                                                        int pageNumber,
-                                                                                       Rectangle rect) {
+                                                                                       Rectangle rect,
+                                                                                       Path cjkFontPath) throws IOException {
+        PdfAcroformNormalizer.Fonts fonts = PdfAcroformNormalizer.normalize(document, cjkFontPath);
         com.itextpdf.forms.fields.PdfFormField existing = acroForm.getField(fieldName);
         com.itextpdf.forms.fields.PdfSignatureFormField field;
         if (existing == null) {
@@ -359,10 +377,59 @@ public final class ElectronicSignatureSigner {
             }
             field = (com.itextpdf.forms.fields.PdfSignatureFormField) existing;
         }
+        field.getPdfObject().put(PdfName.DA, new PdfString(fonts.daAlias + " 12 Tf 0 g"));
+        field.getPdfObject().setModified();
         com.itextpdf.kernel.pdf.PdfPage page = document.getPage(pageNumber);
         PdfWidgetAnnotation widget = FormUtil.ensurePrintableSignatureWidget(field, page, rect);
         PdfWidgetUtil.ensureWidgetInAnnots(page, widget, fieldName);
+        ensureWidgetAppearance(document, widget, rect, fonts);
         return field;
+    }
+
+    private static void ensureWidgetAppearance(PdfDocument document,
+                                               PdfWidgetAnnotation widget,
+                                               Rectangle rect,
+                                               PdfAcroformNormalizer.Fonts fonts) {
+        if (widget == null || rect == null || fonts == null) {
+            return;
+        }
+        int flags = widget.getFlags();
+        flags |= PdfAnnotation.PRINT;
+        widget.setFlags(flags);
+
+        PdfDictionary widgetDict = widget.getPdfObject();
+        PdfArray rectArray = new PdfArray(new float[]{rect.getLeft(), rect.getBottom(), rect.getRight(), rect.getTop()});
+        widgetDict.put(PdfName.Rect, rectArray);
+        widgetDict.setModified();
+
+        PdfDictionary appearanceDict = widgetDict.getAsDictionary(PdfName.AP);
+        PdfObject normalAppearance = appearanceDict != null ? appearanceDict.get(PdfName.N) : null;
+        if (appearanceDict == null) {
+            appearanceDict = new PdfDictionary();
+            widgetDict.put(PdfName.AP, appearanceDict);
+        }
+
+        if (normalAppearance == null) {
+            PdfFormXObject appearance = new PdfFormXObject(new Rectangle(rect.getWidth(), rect.getHeight()));
+            appearance.makeIndirect(document);
+            PdfCanvas canvas = new PdfCanvas(appearance, document);
+            canvas.saveState();
+            canvas.setStrokeColor(ColorConstants.BLACK);
+            canvas.rectangle(0, 0, rect.getWidth(), rect.getHeight());
+            canvas.stroke();
+            canvas.restoreState();
+            PdfFont fontForAppearance = fonts.cjk != null ? fonts.cjk : fonts.helv;
+            canvas.beginText();
+            canvas.setFontAndSize(fontForAppearance, 12f);
+            float textX = 4f;
+            float textY = Math.max(4f, rect.getHeight() / 2f - 6f);
+            canvas.moveText(textX, textY);
+            canvas.showText("Sign");
+            canvas.endText();
+            canvas.release();
+            appearanceDict.put(PdfName.N, appearance.getPdfObject());
+            appearanceDict.setModified();
+        }
     }
 
     private static void ensureFieldNotSigned(PdfDocument document, String fieldName) throws IOException {
