@@ -10,7 +10,6 @@ import com.itextpdf.kernel.pdf.PdfDictionary;
 import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfName;
 import com.itextpdf.kernel.pdf.PdfObject;
-import com.itextpdf.kernel.pdf.PdfString;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -113,13 +112,14 @@ public final class PdfAcroformNormalizer {
             try (InputStream is = Files.newInputStream(cjkFontPath)) {
                 fontBytes = is.readAllBytes();
             }
-            f.cjk = PdfFontFactory.createFont(fontBytes, PdfEncodings.IDENTITY_H, true);
+            f.cjk = PdfFontFactory.createFont(fontBytes, PdfEncodings.IDENTITY_H,
+                    PdfFontFactory.EmbeddingStrategy.PREFER_EMBEDDED);
             f.cjk.makeIndirect(doc);
             fonts.put(new PdfName("CJK"), f.cjk.getPdfObject());
-            af.setDefaultAppearance(new PdfString("/CJK 12 Tf 0 g"));
+            af.setDefaultAppearance("/CJK 12 Tf 0 g");
             f.daAlias = "/CJK";
         } else {
-            af.setDefaultAppearance(new PdfString("/Helv 12 Tf 0 g"));
+            af.setDefaultAppearance("/Helv 12 Tf 0 g");
             f.daAlias = "/Helv";
         }
 
