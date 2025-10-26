@@ -9,7 +9,7 @@ import com.itextpdf.kernel.pdf.PdfDate;
 import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfName;
 import com.itextpdf.kernel.pdf.PdfDictionary;
-import com.itextpdf.kernel.pdf.PdfException;
+import com.itextpdf.kernel.exceptions.PdfException;
 import com.itextpdf.kernel.pdf.PdfObject;
 import com.itextpdf.kernel.pdf.PdfReader;
 import com.itextpdf.kernel.pdf.PdfString;
@@ -387,7 +387,7 @@ public final class ElectronicSignatureSigner {
             field = (com.itextpdf.forms.fields.PdfSignatureFormField) existing;
         }
         if (fonts != null) {
-            field.setDefaultAppearance(new PdfString(fonts.daAlias + " 12 Tf 0 g"));
+            field.setDefaultAppearance(fonts.daAlias + " 12 Tf 0 g");
         }
         field.getPdfObject().setModified();
         com.itextpdf.kernel.pdf.PdfPage page = document.getPage(pageNumber);
