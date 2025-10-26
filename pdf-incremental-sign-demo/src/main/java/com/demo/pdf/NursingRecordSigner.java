@@ -440,6 +440,7 @@ public final class NursingRecordSigner {
         if (field == null) {
             return;
         }
+        field.setDefaultAppearance(new PdfString(FormUtil.DEFAULT_APPEARANCE));
         if (font != null) {
             field.setFont(font);
         }
