@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 DEFAULT_JAR="$PROJECT_ROOT/target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar"
+JAR="${JAR:-$DEFAULT_JAR}"
 
 if [[ ! -f "$JAR" ]]; then
   echo "[app] Missing CLI jar at $JAR. Attempting to build with 'mvn -q -DskipTests package'." >&2
