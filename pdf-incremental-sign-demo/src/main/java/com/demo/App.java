@@ -67,6 +67,12 @@ public class App {
         @CommandLine.Option(names = "--contact", required = false, defaultValue = "nurse-signer@example.com", description = "Contact info stored in the signature dictionary")
         private String contact;
 
+        @CommandLine.Option(names = "--cjk-font", required = false, description = "Path to a CJK font (e.g., NotoSansCJKsc-Regular.otf)")
+        private java.io.File cjkFont;
+
+        @CommandLine.Option(names = "--debug-fonts", description = "Print AcroForm DA/DR/Font diagnostics")
+        private boolean debugFonts;
+
         @Override
         public Integer call() throws Exception {
             ElectronicSignatureSigner.Params params = new ElectronicSignatureSigner.Params();
@@ -84,6 +90,8 @@ public class App {
             params.setReason(reason);
             params.setLocation(location);
             params.setContact(contact);
+            params.setCjkFontPath(cjkFont != null ? cjkFont.toPath() : null);
+            params.setDebugFonts(debugFonts);
             ElectronicSignatureSigner.sign(params);
             return 0;
         }
