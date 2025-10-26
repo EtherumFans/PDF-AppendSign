@@ -1,6 +1,7 @@
 package com.demo;
 
 import com.demo.crypto.DemoKeystoreUtil;
+import com.demo.pdf.ElectronicSignatureSigner;
 import com.demo.pdf.NursingRecordSigner;
 import com.demo.pdf.NursingRecordTemplate;
 import com.demo.pdf.PdfStructureDebugger;
@@ -19,6 +20,72 @@ public class App {
         System.exit(exit);
     }
 
+    @CommandLine.Command(name = "sign-electronic", description = "Append a single electronic signature with a handwritten-style appearance")
+    static class SignElectronic implements Callable<Integer> {
+        @CommandLine.Option(names = "--src", required = true, description = "Source PDF to sign")
+        private Path source;
+
+        @CommandLine.Option(names = "--dest", required = true, description = "Destination PDF with appended signature")
+        private Path destination;
+
+        @CommandLine.Option(names = "--pkcs12", required = false, description = "Signer PKCS#12 file")
+        private Path pkcs12;
+
+        @CommandLine.Option(names = "--password", required = false, description = "Password for PKCS#12")
+        private String password;
+
+        @CommandLine.Option(names = "--page", required = false, defaultValue = "1", description = "Page number for the signature")
+        private int page;
+
+        @CommandLine.Option(names = "--x", required = false, defaultValue = "72", description = "Lower-left X coordinate in points")
+        private float x;
+
+        @CommandLine.Option(names = "--y", required = false, defaultValue = "72", description = "Lower-left Y coordinate in points")
+        private float y;
+
+        @CommandLine.Option(names = "--width", required = false, defaultValue = "180", description = "Signature width in points")
+        private float width;
+
+        @CommandLine.Option(names = "--height", required = false, defaultValue = "72", description = "Signature height in points")
+        private float height;
+
+        @CommandLine.Option(names = "--field", required = false, defaultValue = "sig_electronic", description = "Signature field name to use or create")
+        private String fieldName;
+
+        @CommandLine.Option(names = "--signer", required = false, description = "Signer display name for the signature dictionary")
+        private String signer;
+
+        @CommandLine.Option(names = "--reason", required = false, defaultValue = "电子签名", description = "Reason string stored in the signature dictionary")
+        private String reason;
+
+        @CommandLine.Option(names = "--location", required = false, defaultValue = "Ward A", description = "Location stored in the signature dictionary")
+        private String location;
+
+        @CommandLine.Option(names = "--contact", required = false, defaultValue = "nurse-signer@example.com", description = "Contact info stored in the signature dictionary")
+        private String contact;
+
+        @Override
+        public Integer call() throws Exception {
+            ElectronicSignatureSigner.Params params = new ElectronicSignatureSigner.Params();
+            params.setSource(source.toAbsolutePath().toString());
+            params.setDestination(destination.toAbsolutePath().toString());
+            params.setPkcs12Path(pkcs12 != null ? pkcs12.toAbsolutePath().toString() : null);
+            params.setPassword(password);
+            params.setPage(page);
+            params.setX(x);
+            params.setY(y);
+            params.setWidth(width);
+            params.setHeight(height);
+            params.setFieldName(fieldName);
+            params.setSignerName(signer);
+            params.setReason(reason);
+            params.setLocation(location);
+            params.setContact(contact);
+            ElectronicSignatureSigner.sign(params);
+            return 0;
+        }
+    }
+
     @CommandLine.Command(name = "app", mixinStandardHelpOptions = true,
             subcommands = {
                     CreateTemplate.class,
@@ -26,6 +93,7 @@ public class App {
                     VerifyPdf.class,
                     DebugStructure.class,
                     FixWidgets.class,
+                    SignElectronic.class,
                     Certify.class,
                     GenDemoP12.class
             })

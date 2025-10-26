@@ -79,6 +79,20 @@ Signs a single row in append mode. Common parameters supply the row index and th
 
 Every signing step checks that the output PDF grew in size and re-verifies the document to ensure the new `sig_row_n` is visible to Adobe Reader.
 
+### `sign-electronic`
+
+```
+sign-electronic --src <in> --dest <out> [--pkcs12 <p12>] [--password <pwd>] \
+                [--page p] [--x pts] [--y pts] [--width pts] [--height pts] \
+                [--field name] [--signer name] [--reason text] [--location text]
+```
+
+Appends a single visible electronic signature with a handwritten-style appearance. By default the signature is placed at
+coordinates (72, 72) with a size of 180×72 points on page 1 and uses a generated demo certificate when `--pkcs12` is omitted.
+The command reuses an existing signature field when present or injects one automatically, ensuring the widget stays printable
+and is listed in `/Annots`. The signature dictionary entries (`/Name`, `/Reason`, `/Location`, `/ContactInfo`) can be customized
+with the respective options.
+
 ### `verify`
 
 ```
