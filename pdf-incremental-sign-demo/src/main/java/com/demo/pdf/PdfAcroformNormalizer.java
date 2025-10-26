@@ -10,6 +10,7 @@ import com.itextpdf.kernel.pdf.PdfDictionary;
 import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfName;
 import com.itextpdf.kernel.pdf.PdfObject;
+import com.itextpdf.kernel.pdf.PdfString;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -107,19 +108,43 @@ public final class PdfAcroformNormalizer {
         fonts.put(new PdfName("ZaDb"), f.zapf.getPdfObject());
         fonts.put(new PdfName("F1"), f.helv.getPdfObject());
 
+        Path normalizedCjkPath = null;
         if (cjkFontPath != null) {
-            byte[] fontBytes;
-            try (InputStream is = Files.newInputStream(cjkFontPath)) {
-                fontBytes = is.readAllBytes();
+            if (Files.isRegularFile(cjkFontPath)) {
+                normalizedCjkPath = cjkFontPath;
+            } else {
+                System.err.println("[PdfAcroformNormalizer] CJK font not found or not a file: " + cjkFontPath);
             }
-            f.cjk = PdfFontFactory.createFont(fontBytes, PdfEncodings.IDENTITY_H,
-                    PdfFontFactory.EmbeddingStrategy.PREFER_EMBEDDED);
-            f.cjk.makeIndirect(doc);
-            fonts.put(new PdfName("CJK"), f.cjk.getPdfObject());
-            af.setDefaultAppearance("/CJK 12 Tf 0 g");
+        }
+
+        if (normalizedCjkPath != null) {
+            byte[] fontBytes;
+            try (InputStream is = Files.newInputStream(normalizedCjkPath)) {
+                fontBytes = is.readAllBytes();
+            } catch (IOException ex) {
+                System.err.println("[PdfAcroformNormalizer] Failed to read CJK font '" + normalizedCjkPath
+                        + "'. Falling back to Helvetica. Reason: " + ex.getMessage());
+                fontBytes = null;
+            }
+            if (fontBytes != null) {
+                try {
+                    f.cjk = PdfFontFactory.createFont(fontBytes, PdfEncodings.IDENTITY_H,
+                            PdfFontFactory.EmbeddingStrategy.PREFER_EMBEDDED);
+                    f.cjk.makeIndirect(doc);
+                    fonts.put(new PdfName("CJK"), f.cjk.getPdfObject());
+                } catch (IOException ex) {
+                    System.err.println("[PdfAcroformNormalizer] Failed to create CJK font. Falling back to Helvetica. Reason: "
+                            + ex.getMessage());
+                    f.cjk = null;
+                }
+            }
+        }
+
+        if (f.cjk != null) {
+            af.setDefaultAppearance(new PdfString("/CJK 12 Tf 0 g"));
             f.daAlias = "/CJK";
         } else {
-            af.setDefaultAppearance("/Helv 12 Tf 0 g");
+            af.setDefaultAppearance(new PdfString("/Helv 12 Tf 0 g"));
             f.daAlias = "/Helv";
         }
 

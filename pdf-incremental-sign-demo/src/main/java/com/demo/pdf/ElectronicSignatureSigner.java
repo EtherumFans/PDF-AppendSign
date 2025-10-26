@@ -9,6 +9,7 @@ import com.itextpdf.kernel.pdf.PdfDate;
 import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfName;
 import com.itextpdf.kernel.pdf.PdfDictionary;
+import com.itextpdf.kernel.pdf.PdfException;
 import com.itextpdf.kernel.pdf.PdfObject;
 import com.itextpdf.kernel.pdf.PdfReader;
 import com.itextpdf.kernel.pdf.PdfString;
@@ -253,10 +254,19 @@ public final class ElectronicSignatureSigner {
             if (params.isDebugFonts()) {
                 PdfAcroformNormalizer.dumpAcroFormFonts(document, "BEFORE_NORMALIZE");
             }
-            com.itextpdf.forms.fields.PdfSignatureFormField signatureField = ensureSignatureField(
-                    document, acroForm, params.getFieldName(), params.getPage(), rect, params.getCjkFontPath());
+            PdfAcroformNormalizer.Fonts fonts = PdfAcroformNormalizer.normalize(document, params.getCjkFontPath());
             if (params.isDebugFonts()) {
                 PdfAcroformNormalizer.dumpAcroFormFonts(document, "AFTER_NORMALIZE");
+            }
+            com.itextpdf.forms.fields.PdfSignatureFormField signatureField;
+            try {
+                signatureField = ensureSignatureField(
+                        document, acroForm, params.getFieldName(), params.getPage(), rect, fonts);
+            } catch (PdfException ex) {
+                System.err.println("[sign-electronic] Failed to ensure signature field '" + params.getFieldName()
+                        + "' on page " + params.getPage() + " rect=" + rect + ": " + ex.getMessage());
+                PdfAcroformNormalizer.dumpAcroFormFonts(document, "ON_ERROR_AFTER_NORMALIZE");
+                throw ex;
             }
             ensureFieldNotSigned(document, params.getFieldName());
 
@@ -363,8 +373,7 @@ public final class ElectronicSignatureSigner {
                                                                                        String fieldName,
                                                                                        int pageNumber,
                                                                                        Rectangle rect,
-                                                                                       Path cjkFontPath) throws IOException {
-        PdfAcroformNormalizer.Fonts fonts = PdfAcroformNormalizer.normalize(document, cjkFontPath);
+                                                                                       PdfAcroformNormalizer.Fonts fonts) throws IOException {
         com.itextpdf.forms.fields.PdfFormField existing = acroForm.getField(fieldName);
         com.itextpdf.forms.fields.PdfSignatureFormField field;
         if (existing == null) {
@@ -377,7 +386,9 @@ public final class ElectronicSignatureSigner {
             }
             field = (com.itextpdf.forms.fields.PdfSignatureFormField) existing;
         }
-        field.getPdfObject().put(PdfName.DA, new PdfString(fonts.daAlias + " 12 Tf 0 g"));
+        if (fonts != null) {
+            field.setDefaultAppearance(new PdfString(fonts.daAlias + " 12 Tf 0 g"));
+        }
         field.getPdfObject().setModified();
         com.itextpdf.kernel.pdf.PdfPage page = document.getPage(pageNumber);
         PdfWidgetAnnotation widget = FormUtil.ensurePrintableSignatureWidget(field, page, rect);

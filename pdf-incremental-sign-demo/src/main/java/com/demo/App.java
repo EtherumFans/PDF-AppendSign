@@ -90,7 +90,17 @@ public class App {
             params.setReason(reason);
             params.setLocation(location);
             params.setContact(contact);
-            params.setCjkFontPath(cjkFont != null ? cjkFont.toPath() : null);
+            Path resolvedCjk = null;
+            if (cjkFont != null) {
+                Path candidate = cjkFont.toPath().toAbsolutePath();
+                if (Files.isRegularFile(candidate)) {
+                    resolvedCjk = candidate;
+                } else {
+                    System.err.println("[sign-electronic] --cjk-font not found or not a file, falling back to Helvetica: "
+                            + candidate);
+                }
+            }
+            params.setCjkFontPath(resolvedCjk);
             params.setDebugFonts(debugFonts);
             ElectronicSignatureSigner.sign(params);
             return 0;
