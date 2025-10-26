@@ -1,6 +1,7 @@
 package com.demo.pdf;
 
 import com.itextpdf.forms.PdfAcroForm;
+import com.itextpdf.forms.fields.PdfFormField;
 import com.itextpdf.forms.fields.PdfSignatureFormField;
 import com.itextpdf.io.font.constants.StandardFonts;
 import com.itextpdf.kernel.colors.ColorConstants;
@@ -50,7 +51,7 @@ public final class FormUtil {
 
         PdfString defaultAppearance = form.getDefaultAppearance();
         if (defaultAppearance == null || !DEFAULT_APPEARANCE.equals(defaultAppearance.toUnicodeString())) {
-            form.setDefaultAppearance(DEFAULT_APPEARANCE);
+            form.setDefaultAppearance(new PdfString(DEFAULT_APPEARANCE));
             modified = true;
         }
 
@@ -79,6 +80,14 @@ public final class FormUtil {
         if (modified) {
             form.getPdfObject().setModified();
         }
+    }
+
+    public static void setFieldDefaultAppearance(PdfFormField field) {
+        if (field == null) {
+            return;
+        }
+        field.getPdfObject().put(PdfName.DA, new PdfString(DEFAULT_APPEARANCE));
+        field.getPdfObject().setModified();
     }
 
     private static FontRegistration ensureFontResource(PdfDocument document,
