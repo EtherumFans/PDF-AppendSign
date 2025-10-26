@@ -49,9 +49,9 @@ public final class FormUtil {
             modified = true;
         }
 
-        PdfString defaultAppearance = form.getDefaultAppearance();
-        if (defaultAppearance == null || !DEFAULT_APPEARANCE.equals(defaultAppearance.toUnicodeString())) {
-            form.setDefaultAppearance(new PdfString(DEFAULT_APPEARANCE));
+        String defaultAppearance = form.getDefaultAppearance();
+        if (defaultAppearance == null || !DEFAULT_APPEARANCE.equals(defaultAppearance)) {
+            form.setDefaultAppearance(DEFAULT_APPEARANCE);
             modified = true;
         }
 
