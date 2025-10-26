@@ -515,7 +515,7 @@ public final class NursingRecordSigner {
         if (field == null) {
             return;
         }
-        field.setDefaultAppearance(FormUtil.DEFAULT_APPEARANCE);
+        FormUtil.setFieldDefaultAppearance(field);
         if (font != null) {
             field.setFont(font);
         }
