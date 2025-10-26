@@ -36,6 +36,7 @@ import com.itextpdf.forms.PdfSigFieldLock;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 
 import java.io.BufferedOutputStream;
+import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -443,7 +444,7 @@ public final class NursingRecordSigner {
         fonts.put(new PdfName("ZaDb"), zapf.getPdfObject());
 
         // 设默认外观：用 Helv（注意别名要与上面一致）
-        af.setDefaultAppearance(new PdfString("/Helv 12 Tf 0 g"));
+        af.setDefaultAppearance("/Helv 12 Tf 0 g");
 
         af.setSignatureFlags(PdfAcroForm.SIGNATURE_EXIST | PdfAcroForm.APPEND_ONLY);
         af.setModified();
@@ -514,7 +515,7 @@ public final class NursingRecordSigner {
         if (field == null) {
             return;
         }
-        field.setDefaultAppearance(new PdfString(FormUtil.DEFAULT_APPEARANCE));
+        field.setDefaultAppearance(FormUtil.DEFAULT_APPEARANCE);
         if (font != null) {
             field.setFont(font);
         }
