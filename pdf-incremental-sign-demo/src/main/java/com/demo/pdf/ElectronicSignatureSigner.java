@@ -386,8 +386,9 @@ public final class ElectronicSignatureSigner {
             }
             field = (com.itextpdf.forms.fields.PdfSignatureFormField) existing;
         }
-        if (fonts != null) {
-            field.setDefaultAppearance(new PdfString(fonts.daAlias + " 12 Tf 0 g"));
+        if (fonts != null && fonts.daAlias != null) {
+            field.getPdfObject().put(PdfName.DA, new PdfString(fonts.daAlias + " 12 Tf 0 g"));
+            field.getPdfObject().setModified();
         }
         field.getPdfObject().setModified();
         com.itextpdf.kernel.pdf.PdfPage page = document.getPage(pageNumber);
