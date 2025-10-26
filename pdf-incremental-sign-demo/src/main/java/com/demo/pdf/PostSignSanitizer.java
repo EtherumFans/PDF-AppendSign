@@ -17,7 +17,6 @@ import com.itextpdf.kernel.pdf.PdfNumber;
 import com.itextpdf.kernel.pdf.PdfObject;
 import com.itextpdf.kernel.pdf.PdfPage;
 import com.itextpdf.kernel.pdf.PdfReader;
-import com.itextpdf.kernel.pdf.PdfString;
 import com.itextpdf.kernel.pdf.PdfWriter;
 import com.itextpdf.kernel.pdf.StampingProperties;
 import com.itextpdf.kernel.pdf.WriterProperties;
@@ -94,7 +93,7 @@ public final class PostSignSanitizer {
         }
         PdfNumber sigFlags = acroDict.getAsNumber(PdfName.SigFlags);
         int currentFlags = sigFlags != null ? sigFlags.intValue() : 0;
-        int requiredFlags = PdfAcroForm.SIGNATURES_EXIST | PdfAcroForm.APPEND_ONLY;
+        int requiredFlags = FormUtil.SIG_FLAG_SIGNATURES_EXIST | FormUtil.SIG_FLAG_APPEND_ONLY;
         if ((currentFlags & requiredFlags) != requiredFlags) {
             acroDict.put(PdfName.SigFlags, new PdfNumber(currentFlags | requiredFlags));
             acroDict.setModified();
@@ -115,7 +114,7 @@ public final class PostSignSanitizer {
         purgeNonFontEntries(fonts);
 
         FormUtil.ensureAcroFormAppearanceDefaults(pdf, acro);
-        acro.setDefaultAppearance(new PdfString(FormUtil.DEFAULT_APPEARANCE));
+        acro.setDefaultAppearance(FormUtil.DEFAULT_APPEARANCE);
         acro.getPdfObject().setModified();
     }
 
@@ -212,7 +211,7 @@ public final class PostSignSanitizer {
                 ? widget.getRectangle().toRectangle() : null;
         if (rect != null && rect.getWidth() > 0 && rect.getHeight() > 0 && page != null) {
             Rectangle pageRect = page.getPageSize();
-            if (pageRect != null && rect.intersects(pageRect)) {
+            if (pageRect != null && FormUtil.rectanglesIntersect(rect, pageRect)) {
                 return rect;
             }
         }

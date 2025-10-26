@@ -97,7 +97,7 @@ public final class PdfStructureDump {
         PdfNumber sigFlags = acroDict.getAsNumber(PdfName.SigFlags);
         int sigFlagValue = sigFlags != null ? sigFlags.intValue() : 0;
         facts.add(format("AcroForm.SigFlags=%d", sigFlagValue));
-        int requiredFlags = PdfAcroForm.SIGNATURES_EXIST | PdfAcroForm.APPEND_ONLY;
+        int requiredFlags = FormUtil.SIG_FLAG_SIGNATURES_EXIST | FormUtil.SIG_FLAG_APPEND_ONLY;
         if ((sigFlagValue & requiredFlags) != requiredFlags) {
             blockers.add("AcroForm.SigFlags missing SIGNATURES_EXIST/APPEND_ONLY bits");
         }
@@ -302,7 +302,7 @@ public final class PdfStructureDump {
         boolean rectIntersects = false;
         if (rectValid && page != null) {
             Rectangle pageRect = page.getPageSize();
-            rectIntersects = pageRect != null && rect.intersects(pageRect);
+            rectIntersects = pageRect != null && FormUtil.rectanglesIntersect(rect, pageRect);
         }
         facts.add(format("Widget.%s[%d].rectValid=%s", fieldName, index, rectValid));
         facts.add(format("Widget.%s[%d].rectIntersectsPage=%s", fieldName, index, rectIntersects));
