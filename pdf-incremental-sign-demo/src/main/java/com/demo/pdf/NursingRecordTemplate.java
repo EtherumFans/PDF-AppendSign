@@ -12,7 +12,6 @@ import com.itextpdf.kernel.geom.Rectangle;
 import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfName;
 import com.itextpdf.kernel.pdf.PdfReader;
-import com.itextpdf.kernel.pdf.PdfString;
 import com.itextpdf.kernel.pdf.PdfVersion;
 import com.itextpdf.kernel.pdf.PdfWriter;
 import com.itextpdf.kernel.pdf.WriterProperties;
@@ -110,21 +109,21 @@ public class NursingRecordTemplate {
 
                 Rectangle rTime = new Rectangle(xTime + 3f, rowBottom + 3f, colWidths[0] - 6f, height - 6f);
                 PdfTextFormField tfTime = PdfTextFormField.createText(pdf, rTime, FIELD_TIME_PREFIX + i, "");
-                tfTime.setDefaultAppearance(new PdfString(FormUtil.DEFAULT_APPEARANCE));
+                tfTime.setDefaultAppearance(FormUtil.DEFAULT_APPEARANCE);
                 tfTime.setFont(cellFont);
                 tfTime.setFontSize(CELL_FONT_SIZE);
                 form.addField(tfTime, pdf.getFirstPage());
 
                 Rectangle rContent = new Rectangle(xContent + 3f, rowBottom + 3f, colWidths[1] - 6f, height - 6f);
                 PdfTextFormField tfContent = PdfTextFormField.createMultilineText(pdf, rContent, FIELD_CONTENT_PREFIX + i, "");
-                tfContent.setDefaultAppearance(new PdfString(FormUtil.DEFAULT_APPEARANCE));
+                tfContent.setDefaultAppearance(FormUtil.DEFAULT_APPEARANCE);
                 tfContent.setFont(cellFont);
                 tfContent.setFontSize(CELL_FONT_SIZE);
                 form.addField(tfContent, pdf.getFirstPage());
 
                 Rectangle rNurse = new Rectangle(xNurse + 3f, rowBottom + 3f, colWidths[2] - 6f, height - 6f);
                 PdfTextFormField tfNurse = PdfTextFormField.createText(pdf, rNurse, FIELD_NURSE_PREFIX + i, "");
-                tfNurse.setDefaultAppearance(new PdfString(FormUtil.DEFAULT_APPEARANCE));
+                tfNurse.setDefaultAppearance(FormUtil.DEFAULT_APPEARANCE);
                 tfNurse.setFont(cellFont);
                 tfNurse.setFontSize(CELL_FONT_SIZE);
                 form.addField(tfNurse, pdf.getFirstPage());
