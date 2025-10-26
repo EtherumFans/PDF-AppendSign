@@ -10,12 +10,14 @@ import com.itextpdf.kernel.colors.ColorConstants;
 import com.itextpdf.kernel.font.PdfFont;
 import com.itextpdf.kernel.font.PdfFontFactory;
 import com.itextpdf.kernel.geom.Rectangle;
+import com.itextpdf.kernel.pdf.PdfArray;
 import com.itextpdf.kernel.pdf.PdfDate;
 import com.itextpdf.kernel.pdf.PdfDictionary;
 import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfName;
 import com.itextpdf.kernel.pdf.PdfPage;
 import com.itextpdf.kernel.pdf.PdfReader;
+import com.itextpdf.kernel.pdf.PdfResources;
 import com.itextpdf.kernel.pdf.PdfString;
 import com.itextpdf.kernel.pdf.StampingProperties;
 import com.itextpdf.kernel.pdf.annot.PdfAnnotation;
@@ -24,7 +26,7 @@ import com.itextpdf.kernel.pdf.canvas.PdfCanvas;
 import com.itextpdf.kernel.pdf.canvas.PdfCanvasConstants;
 import com.itextpdf.kernel.pdf.xobject.PdfFormXObject;
 import com.itextpdf.layout.Canvas;
-import com.itextpdf.layout.property.TextAlignment;
+import com.itextpdf.layout.properties.TextAlignment;
 import com.itextpdf.signatures.BouncyCastleDigest;
 import com.itextpdf.signatures.DigestAlgorithms;
 import com.itextpdf.signatures.IExternalDigest;
@@ -352,20 +354,21 @@ public final class ElectronicSignatureSigner {
         } else {
             sigField = PdfSignatureFormField.createSignature(pdfDoc, rect);
             sigField.setFieldName(fieldName);
-            sigField.setDefaultAppearance(new PdfString("/Helv 12 Tf 0 g"));
+            sigField.setDefaultAppearance("/Helv 12 Tf 0 g");
             af.addField(sigField, pdfDoc.getPage(pageIndex));
         }
 
-        sigField.setDefaultAppearance(new PdfString("/Helv 12 Tf 0 g"));
+        sigField.setDefaultAppearance("/Helv 12 Tf 0 g");
 
-        PdfWidgetAnnotation widget = sigField.getFirstFormAnnotation();
+        java.util.List<PdfWidgetAnnotation> widgets = sigField.getWidgets();
+        PdfWidgetAnnotation widget = widgets != null && !widgets.isEmpty() ? widgets.get(0) : null;
         if (widget != null) {
-            widget.setFlag(PdfAnnotation.PRINT, true);
-            widget.setFlag(PdfAnnotation.INVISIBLE, false);
-            widget.setFlag(PdfAnnotation.HIDDEN, false);
-            widget.setFlag(PdfAnnotation.NO_VIEW, false);
-            widget.setFlag(PdfAnnotation.TOGGLE_NO_VIEW, false);
-            widget.setRectangle(rect);
+            widget.setFlag(PdfAnnotation.PRINT);
+            widget.resetFlag(PdfAnnotation.INVISIBLE);
+            widget.resetFlag(PdfAnnotation.HIDDEN);
+            widget.resetFlag(PdfAnnotation.NO_VIEW);
+            widget.resetFlag(PdfAnnotation.TOGGLE_NO_VIEW);
+            widget.setRectangle(new PdfArray(rect));
 
             PdfPage page = pdfDoc.getPage(pageIndex);
             boolean present = false;
@@ -401,7 +404,8 @@ public final class ElectronicSignatureSigner {
         if (this.cjkFontPath != null) {
             try {
                 byte[] fontBytes = Files.readAllBytes(this.cjkFontPath);
-                font = PdfFontFactory.createFont(fontBytes, PdfEncodings.IDENTITY_H, true);
+                font = PdfFontFactory.createFont(fontBytes, PdfEncodings.IDENTITY_H,
+                        PdfFontFactory.EmbeddingStrategy.PREFER_EMBEDDED);
                 text = "已签名";
             } catch (IOException ex) {
                 System.err.println("[sign-electronic] Failed to load CJK font '" + this.cjkFontPath
@@ -413,9 +417,14 @@ public final class ElectronicSignatureSigner {
             font = PdfFontFactory.createFont(StandardFonts.HELVETICA);
             text = "Signed";
         }
-        xobj.getResources(true).addFont(pdfDoc, font);
+        PdfResources resources = xobj.getResources();
+        if (resources == null) {
+            resources = new PdfResources();
+            xobj.put(PdfName.Resources, resources.getPdfObject());
+        }
+        resources.addFont(pdfDoc, font);
 
-        try (Canvas layout = new Canvas(pdfCanvas, pdfDoc, rect)) {
+        try (Canvas layout = new Canvas(pdfCanvas, rect)) {
             layout.setFont(font).setFontSize(10);
             layout.showTextAligned(text, rect.getWidth() / 2f, rect.getHeight() / 2f, TextAlignment.CENTER);
         }

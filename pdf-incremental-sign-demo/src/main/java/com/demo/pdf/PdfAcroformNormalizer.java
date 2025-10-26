@@ -38,7 +38,7 @@ public class PdfAcroformNormalizer {
         PdfDictionary helv = new PdfDictionary();
         helv.put(PdfName.Type, PdfName.Font);
         helv.put(PdfName.Subtype, PdfName.Type1);
-        helv.put(PdfName.BaseFont, PdfName.Helvetica);
+        helv.put(PdfName.BaseFont, new PdfName("Helvetica"));
         helv.makeIndirect(doc);
 
         PdfDictionary zapf = new PdfDictionary();
@@ -53,7 +53,7 @@ public class PdfAcroformNormalizer {
         fonts.put(new PdfName("F1"),   helv);
 
         // 默认外观固定为 Helvetica；创建字段阶段更稳
-        af.setDefaultAppearance(new PdfString("/Helv 12 Tf 0 g"));
+        af.setDefaultAppearance("/Helv 12 Tf 0 g");
 
         // SigFlags（可选，利于 Acrobat UI）
         af.setSignatureFlags(PdfAcroForm.SIGNATURE_EXIST | PdfAcroForm.APPEND_ONLY);
