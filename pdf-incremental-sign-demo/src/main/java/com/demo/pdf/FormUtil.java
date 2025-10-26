@@ -26,7 +26,7 @@ public final class FormUtil {
     private static final PdfName HELV_FONT_NAME = new PdfName("Helv");
     private static final PdfName F1_FONT_NAME = new PdfName("F1");
     private static final PdfName ZADB_FONT_NAME = new PdfName("ZaDb");
-    private static final String DEFAULT_APPEARANCE = "/Helv 12 Tf 0 g";
+    public static final String DEFAULT_APPEARANCE = "/Helv 12 Tf 0 g";
 
     private FormUtil() {
     }
