@@ -232,7 +232,6 @@ public final class NursingRecordTemplate {
         Rectangle rect = new Rectangle(llx, lly, urx, ury);
         TextField field = new TextField(writer, rect, name);
         field.setFontSize(11f);
-        field.setOptions(TextField.REMOVE_TRAILING_SPACES);
         if (multiline) {
             field.setOptions(field.getOptions() | TextField.MULTILINE);
         }
@@ -259,7 +258,7 @@ public final class NursingRecordTemplate {
     }
 
     private static String safe(String input) {
-        return input == null ? "" : input;
+        return input == null ? "" : input.stripTrailing();
     }
 
     static String timeFieldName(int row) {

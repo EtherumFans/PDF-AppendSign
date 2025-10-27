@@ -8,10 +8,10 @@ import com.itextpdf.text.pdf.security.BouncyCastleDigest;
 import com.itextpdf.text.pdf.security.ExternalDigest;
 import com.itextpdf.text.pdf.security.ExternalSignature;
 import com.itextpdf.text.pdf.security.MakeSignature;
-import com.itextpdf.text.pdf.security.PdfSignatureAppearance;
+import com.itextpdf.text.pdf.PdfSignatureAppearance;
 import com.itextpdf.text.pdf.security.PrivateKeySignature;
 import com.itextpdf.text.pdf.security.TSAClientBouncyCastle;
-import com.itextpdf.text.pdf.security.TsaClient;
+import com.itextpdf.text.pdf.security.TSAClient;
 
 import java.io.FileOutputStream;
 import java.nio.file.Files;
@@ -208,7 +208,7 @@ public final class ElectronicSignatureSigner {
             ExternalDigest digest = new BouncyCastleDigest();
             ExternalSignature signature = new PrivateKeySignature(ctx.privateKey(), "SHA256", BouncyCastleProvider.PROVIDER_NAME);
             Certificate[] chain = ctx.chain();
-            TsaClient tsaClient = null;
+            TSAClient tsaClient = null;
             if (params.getTsaUrl() != null && !params.getTsaUrl().isBlank()) {
                 tsaClient = new TSAClientBouncyCastle(params.getTsaUrl());
             }
