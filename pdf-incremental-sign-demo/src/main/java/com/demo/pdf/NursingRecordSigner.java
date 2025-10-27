@@ -6,9 +6,11 @@ import com.itextpdf.text.Rectangle;
 import com.itextpdf.text.pdf.AcroFields;
 import com.itextpdf.text.pdf.AcroFields.FieldPosition;
 import com.itextpdf.text.pdf.PdfAnnotation;
+import com.itextpdf.text.pdf.PdfArray;
 import com.itextpdf.text.pdf.PdfDictionary;
 import com.itextpdf.text.pdf.PdfFormField;
 import com.itextpdf.text.pdf.PdfName;
+import com.itextpdf.text.pdf.PdfIndirectObject;
 import com.itextpdf.text.pdf.PdfReader;
 import com.itextpdf.text.pdf.PdfStamper;
 import com.itextpdf.text.pdf.security.BouncyCastleDigest;
@@ -193,7 +195,7 @@ public final class NursingRecordSigner {
             PdfStamper stamper = PdfStamper.createSignature(reader, os, '\0', null, true);
             boolean signatureApplied = false;
             try {
-                prepareAcroForm(reader);
+                prepareAcroForm(reader, stamper);
                 Rectangle pageRect = requirePageRectangle(reader, TARGET_PAGE);
                 BaseFont baseFont = resolveBaseFont();
                 System.out.println("[sign-row] Using font for text fields: " + baseFont.getPostscriptFontName());
@@ -384,12 +386,24 @@ public final class NursingRecordSigner {
         return pos;
     }
 
-    private static void prepareAcroForm(PdfReader reader) {
+    private static void prepareAcroForm(PdfReader reader, PdfStamper stamper) throws IOException {
         PdfDictionary catalog = reader.getCatalog();
-        PdfDictionary acro = (PdfDictionary) PdfReader.getPdfObject(catalog.get(PdfName.ACROFORM));
-        if (acro != null) {
-            acro.remove(PdfName.NEEDAPPEARANCES);
+        PdfDictionary acro = catalog.getAsDictionary(PdfName.ACROFORM);
+        if (acro == null) {
+            acro = new PdfDictionary();
+            acro.put(PdfName.FIELDS, new PdfArray());
+            PdfIndirectObject ref = stamper.getWriter().addToBody(acro);
+            catalog.put(PdfName.ACROFORM, ref.getIndirectReference());
+            stamper.getWriter().markUsed(catalog);
+            return;
         }
+
+        PdfArray fields = acro.getAsArray(PdfName.FIELDS);
+        if (fields == null) {
+            acro.put(PdfName.FIELDS, new PdfArray());
+        }
+        acro.remove(PdfName.NEEDAPPEARANCES);
+        stamper.getWriter().markUsed(acro);
     }
 
     private static Rectangle requirePageRectangle(PdfReader reader, int pageNumber) {
