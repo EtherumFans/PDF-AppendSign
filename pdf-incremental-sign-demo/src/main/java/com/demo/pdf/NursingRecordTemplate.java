@@ -182,7 +182,7 @@ public final class NursingRecordTemplate {
                                       int rowCount,
                                       float left,
                                       float headerBottom,
-                                      float tableBottom) throws DocumentException {
+                                      float tableBottom) throws IOException, DocumentException {
         float[] columnStarts = new float[colWidths.length + 1];
         columnStarts[0] = left;
         for (int i = 0; i < colWidths.length; i++) {
@@ -220,7 +220,7 @@ public final class NursingRecordTemplate {
     private static void addTextField(PdfWriter writer,
                                      String name,
                                      float llx, float lly,
-                                     float urx, float ury) throws DocumentException {
+                                     float urx, float ury) throws IOException, DocumentException {
         addTextField(writer, name, llx, lly, urx, ury, false);
     }
 
@@ -228,7 +228,7 @@ public final class NursingRecordTemplate {
                                      String name,
                                      float llx, float lly,
                                      float urx, float ury,
-                                     boolean multiline) throws DocumentException {
+                                     boolean multiline) throws IOException, DocumentException {
         Rectangle rect = new Rectangle(llx, lly, urx, ury);
         TextField field = new TextField(writer, rect, name);
         field.setFontSize(11f);
