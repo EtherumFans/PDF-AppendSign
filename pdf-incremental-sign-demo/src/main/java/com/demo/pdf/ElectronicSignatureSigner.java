@@ -184,10 +184,15 @@ public final class ElectronicSignatureSigner {
         if (params.getSource() == null || params.getDestination() == null) {
             throw new IllegalArgumentException("Source and destination must be provided");
         }
-        ensureParentDir(params.getDestination());
+        Path sourcePath = Path.of(params.getSource()).toAbsolutePath();
+        if (Files.notExists(sourcePath) || !Files.isRegularFile(sourcePath)) {
+            throw new IllegalArgumentException("Source PDF not found: " + sourcePath);
+        }
+        Path destinationPath = Path.of(params.getDestination()).toAbsolutePath();
+        ensureParentDir(destinationPath);
 
-        PdfReader reader = new PdfReader(params.getSource());
-        try (FileOutputStream os = new FileOutputStream(params.getDestination())) {
+        PdfReader reader = new PdfReader(sourcePath.toString());
+        try (FileOutputStream os = new FileOutputStream(destinationPath.toString())) {
             PdfStamper stamper = PdfStamper.createSignature(reader, os, '\0', null, true);
             PdfSignatureAppearance appearance = stamper.getSignatureAppearance();
             appearance.setReason(params.getReason());
@@ -219,10 +224,10 @@ public final class ElectronicSignatureSigner {
         }
     }
 
-    private static void ensureParentDir(String dest) throws Exception {
-        Path path = Path.of(dest).toAbsolutePath();
-        if (Files.notExists(path.getParent())) {
-            Files.createDirectories(path.getParent());
+    private static void ensureParentDir(Path dest) throws Exception {
+        Path parent = dest.getParent();
+        if (parent != null && Files.notExists(parent)) {
+            Files.createDirectories(parent);
         }
     }
 }
