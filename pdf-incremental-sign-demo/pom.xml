@@ -9,7 +9,7 @@
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <itext.version>7.2.5</itext.version>
+        <itext5.version>5.5.6</itext5.version>
         <picocli.version>4.7.6</picocli.version>
         <bc.version>1.78.1</bc.version>
     </properties>
@@ -17,28 +17,8 @@
     <dependencies>
         <dependency>
             <groupId>com.itextpdf</groupId>
-            <artifactId>sign</artifactId>
-            <version>${itext.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>com.itextpdf</groupId>
-            <artifactId>kernel</artifactId>
-            <version>${itext.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>com.itextpdf</groupId>
-            <artifactId>forms</artifactId>
-            <version>${itext.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>com.itextpdf</groupId>
-            <artifactId>layout</artifactId>
-            <version>${itext.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>com.itextpdf</groupId>
-            <artifactId>io</artifactId>
-            <version>${itext.version}</version>
+            <artifactId>itextpdf</artifactId>
+            <version>${itext5.version}</version>
         </dependency>
         <dependency>
             <groupId>org.bouncycastle</groupId>
