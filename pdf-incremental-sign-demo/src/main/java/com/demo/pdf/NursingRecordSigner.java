@@ -13,6 +13,7 @@ import com.itextpdf.text.pdf.PdfName;
 import com.itextpdf.text.pdf.PdfIndirectObject;
 import com.itextpdf.text.pdf.PdfReader;
 import com.itextpdf.text.pdf.PdfStamper;
+import com.itextpdf.text.pdf.PdfString;
 import com.itextpdf.text.pdf.security.BouncyCastleDigest;
 import com.itextpdf.text.pdf.security.ExternalDigest;
 import com.itextpdf.text.pdf.security.ExternalSignature;
@@ -403,7 +404,23 @@ public final class NursingRecordSigner {
         if (fields == null) {
             acro.put(PdfName.FIELDS, new PdfArray());
         }
+
+        PdfDictionary resources = acro.getAsDict(PdfName.DR);
+        if (resources == null) {
+            resources = new PdfDictionary();
+            acro.put(PdfName.DR, resources);
+        }
+
+        if (resources.getAsDict(PdfName.FONT) == null) {
+            resources.put(PdfName.FONT, new PdfDictionary());
+        }
+
+        if (acro.get(PdfName.DA) == null) {
+            acro.put(PdfName.DA, new PdfString("/Helv 0 Tf 0 g"));
+        }
+
         acro.remove(PdfName.NEEDAPPEARANCES);
+        stamper.markUsed(resources);
         stamper.markUsed(acro);
     }
 
