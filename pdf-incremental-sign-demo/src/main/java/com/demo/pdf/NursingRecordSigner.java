@@ -1,6 +1,7 @@
 package com.demo.pdf;
 
 import com.demo.crypto.DemoKeystoreUtil;
+import com.itextpdf.text.DocumentException;
 import com.itextpdf.text.Rectangle;
 import com.itextpdf.text.pdf.AcroFields;
 import com.itextpdf.text.pdf.AcroFields.FieldPosition;
@@ -190,6 +191,7 @@ public final class NursingRecordSigner {
         PdfReader reader = new PdfReader(params.getSource());
         try (FileOutputStream os = new FileOutputStream(params.getDestination())) {
             PdfStamper stamper = PdfStamper.createSignature(reader, os, '\0', null, true);
+            boolean signatureApplied = false;
             try {
                 prepareAcroForm(reader);
                 Rectangle pageRect = requirePageRectangle(reader, TARGET_PAGE);
@@ -233,11 +235,23 @@ public final class NursingRecordSigner {
                 }
 
                 MakeSignature.signDetached(appearance, digest, signature, chain, null, null, tsaClient, 0, MakeSignature.CryptoStandard.CMS);
+                signatureApplied = true;
             } finally {
-                stamper.close();
+                closeStamper(stamper, signatureApplied);
             }
         } finally {
             reader.close();
+        }
+    }
+
+    private static void closeStamper(PdfStamper stamper, boolean signatureApplied) throws DocumentException {
+        try {
+            stamper.close();
+        } catch (DocumentException e) {
+            if (signatureApplied) {
+                throw e;
+            }
+            System.err.println("[sign-row] Unable to close stamper cleanly: " + e.getMessage());
         }
     }
 
