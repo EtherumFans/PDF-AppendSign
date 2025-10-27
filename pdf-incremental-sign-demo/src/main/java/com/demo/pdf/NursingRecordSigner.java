@@ -13,6 +13,7 @@ import com.itextpdf.text.pdf.PdfName;
 import com.itextpdf.text.pdf.PdfIndirectObject;
 import com.itextpdf.text.pdf.PdfReader;
 import com.itextpdf.text.pdf.PdfStamper;
+import com.itextpdf.text.pdf.PdfStamperImp;
 import com.itextpdf.text.pdf.security.BouncyCastleDigest;
 import com.itextpdf.text.pdf.security.ExternalDigest;
 import com.itextpdf.text.pdf.security.ExternalSignature;
@@ -388,13 +389,14 @@ public final class NursingRecordSigner {
 
     private static void prepareAcroForm(PdfReader reader, PdfStamper stamper) throws IOException {
         PdfDictionary catalog = reader.getCatalog();
-        PdfDictionary acro = catalog.getAsDictionary(PdfName.ACROFORM);
+        PdfDictionary acro = catalog.getAsDict(PdfName.ACROFORM);
+        PdfStamperImp stamperImp = (PdfStamperImp) stamper.getWriter();
         if (acro == null) {
             acro = new PdfDictionary();
             acro.put(PdfName.FIELDS, new PdfArray());
             PdfIndirectObject ref = stamper.getWriter().addToBody(acro);
             catalog.put(PdfName.ACROFORM, ref.getIndirectReference());
-            stamper.getWriter().markUsed(catalog);
+            stamperImp.markUsed(catalog);
             return;
         }
 
@@ -403,7 +405,7 @@ public final class NursingRecordSigner {
             acro.put(PdfName.FIELDS, new PdfArray());
         }
         acro.remove(PdfName.NEEDAPPEARANCES);
-        stamper.getWriter().markUsed(acro);
+        stamperImp.markUsed(acro);
     }
 
     private static Rectangle requirePageRectangle(PdfReader reader, int pageNumber) {
