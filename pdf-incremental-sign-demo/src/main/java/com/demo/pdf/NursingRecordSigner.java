@@ -1,7 +1,6 @@
 package com.demo.pdf;
 
 import com.demo.crypto.DemoKeystoreUtil;
-import com.itextpdf.text.BaseFont;
 import com.itextpdf.text.Rectangle;
 import com.itextpdf.text.pdf.AcroFields;
 import com.itextpdf.text.pdf.AcroFields.FieldPosition;
@@ -20,6 +19,7 @@ import com.itextpdf.text.pdf.security.TSAClient;
 import com.itextpdf.text.pdf.PdfSignatureAppearance;
 import com.itextpdf.text.pdf.security.TSAClientBouncyCastle;
 import com.itextpdf.text.pdf.TextField;
+import com.itextpdf.text.pdf.BaseFont;
 
 import java.io.FileOutputStream;
 import java.io.IOException;
