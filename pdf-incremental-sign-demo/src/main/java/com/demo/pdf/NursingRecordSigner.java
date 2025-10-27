@@ -244,7 +244,8 @@ public final class NursingRecordSigner {
         }
     }
 
-    private static void closeStamper(PdfStamper stamper, boolean signatureApplied) throws DocumentException {
+    private static void closeStamper(PdfStamper stamper, boolean signatureApplied)
+            throws DocumentException, IOException {
         try {
             stamper.close();
         } catch (DocumentException e) {
@@ -252,6 +253,11 @@ public final class NursingRecordSigner {
                 throw e;
             }
             System.err.println("[sign-row] Unable to close stamper cleanly: " + e.getMessage());
+        } catch (IOException e) {
+            if (signatureApplied) {
+                throw e;
+            }
+            System.err.println("[sign-row] I/O error while closing stamper: " + e.getMessage());
         }
     }
 
