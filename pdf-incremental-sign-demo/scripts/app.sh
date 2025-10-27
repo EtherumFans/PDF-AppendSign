@@ -52,8 +52,10 @@ if [[ ! -f "$JAR" ]]; then
       JAR="$DEFAULT_JAR"
     fi
 
-    echo "[app] Build did not produce $JAR. Please run 'mvn -q -DskipTests package' manually." >&2
-    exit 1
+    if [[ ! -f "$JAR" ]]; then
+      echo "[app] Build did not produce $JAR. Please run 'mvn -q -DskipTests package' manually." >&2
+      exit 1
+    fi
   fi
 fi
 
