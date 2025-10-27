@@ -4,12 +4,7 @@ import com.demo.crypto.DemoKeystoreUtil;
 import com.demo.pdf.ElectronicSignatureSigner;
 import com.demo.pdf.NursingRecordSigner;
 import com.demo.pdf.NursingRecordTemplate;
-import com.demo.pdf.PdfStructureDebugger;
-import com.demo.pdf.PdfStructureDiff;
-import com.demo.pdf.PdfStructureDump;
-import com.demo.pdf.PostSignSanitizer;
 import com.demo.pdf.SignatureVerifier;
-import com.demo.pdf.SignatureWidgetRepairer;
 import picocli.CommandLine;
 
 import java.nio.file.Files;
@@ -23,55 +18,153 @@ public class App {
         System.exit(exit);
     }
 
-    @CommandLine.Command(name = "sign-electronic", description = "Append a single electronic signature with a handwritten-style appearance")
-    static class SignElectronic implements Callable<Integer> {
+    @CommandLine.Command(name = "app", mixinStandardHelpOptions = true,
+            subcommands = {
+                    CreateTemplate.class,
+                    SignRow.class,
+                    VerifyPdf.class,
+                    SignElectronic.class,
+                    Certify.class,
+                    GenDemoP12.class
+            })
+    static class Root implements Runnable {
+        @Override
+        public void run() {
+            CommandLine.usage(this, System.out);
+        }
+    }
+
+    @CommandLine.Command(name = "create-template", description = "Create a nursing record template PDF")
+    static class CreateTemplate implements Callable<Integer> {
+        @CommandLine.Option(names = "--out", required = true, description = "Destination PDF file")
+        private Path output;
+
+        @CommandLine.Option(names = "--rows", defaultValue = "6", description = "Number of template rows")
+        private int rows;
+
+        @CommandLine.Option(names = "--certP12", description = "Optional PKCS#12 used to DocMDP certify the template")
+        private Path certPath;
+
+        @CommandLine.Option(names = "--password", description = "Password for the PKCS#12 (default 123456)")
+        private String password;
+
+        @Override
+        public Integer call() throws Exception {
+            Path target = output.toAbsolutePath();
+            if (certPath == null) {
+                NursingRecordTemplate.createTemplate(target.toString(), rows);
+                System.out.println("[create-template] Template written to " + target);
+            } else {
+                Path temp = Files.createTempFile("nursing-template", ".pdf");
+                try {
+                    NursingRecordTemplate.createTemplate(temp.toString(), rows);
+                    NursingRecordSigner.certifyDocument(temp.toString(), target.toString(),
+                            certPath.toAbsolutePath().toString(), password);
+                    System.out.println("[create-template] Certified template written to " + target);
+                } finally {
+                    Files.deleteIfExists(temp);
+                }
+            }
+            return 0;
+        }
+    }
+
+    @CommandLine.Command(name = "sign-row", description = "Fill a row and append a signature")
+    static class SignRow implements Callable<Integer> {
         @CommandLine.Option(names = "--src", required = true, description = "Source PDF to sign")
         private Path source;
 
-        @CommandLine.Option(names = "--dest", required = true, description = "Destination PDF with appended signature")
+        @CommandLine.Option(names = "--dest", required = true, description = "Destination PDF output")
         private Path destination;
 
-        @CommandLine.Option(names = "--pkcs12", required = false, description = "Signer PKCS#12 file")
+        @CommandLine.Option(names = "--row", required = true, description = "Row number (1-based)")
+        private int row;
+
+        @CommandLine.Option(names = "--time", required = true, description = "Time value")
+        private String time;
+
+        @CommandLine.Option(names = "--text", required = true, description = "Nursing note text")
+        private String text;
+
+        @CommandLine.Option(names = "--nurse", required = true, description = "Nurse name")
+        private String nurse;
+
+        @CommandLine.Option(names = "--pkcs12", description = "Signer PKCS#12 path")
         private Path pkcs12;
 
-        @CommandLine.Option(names = "--password", required = false, description = "Password for PKCS#12")
+        @CommandLine.Option(names = "--password", description = "PKCS#12 password (default 123456)")
         private String password;
 
-        @CommandLine.Option(names = "--page", required = false, defaultValue = "1", description = "Page number for the signature")
+        @CommandLine.Option(names = "--tsa", description = "Optional TSA URL")
+        private String tsaUrl;
+
+        @Override
+        public Integer call() throws Exception {
+            NursingRecordSigner.SignParams params = new NursingRecordSigner.SignParams();
+            params.setSource(source.toAbsolutePath().toString());
+            params.setDestination(destination.toAbsolutePath().toString());
+            params.setRow(row);
+            params.setTimeValue(time);
+            params.setTextValue(text);
+            params.setNurse(nurse);
+            params.setPkcs12Path(pkcs12 != null ? pkcs12.toAbsolutePath().toString() : null);
+            params.setPassword(password);
+            params.setTsaUrl(tsaUrl);
+            NursingRecordSigner.signRow(params);
+            System.out.println("[sign-row] Signed row " + row + " -> " + destination.toAbsolutePath());
+            return 0;
+        }
+    }
+
+    @CommandLine.Command(name = "sign-electronic", description = "Append a visible electronic signature")
+    static class SignElectronic implements Callable<Integer> {
+        @CommandLine.Option(names = "--src", required = true, description = "Source PDF")
+        private Path source;
+
+        @CommandLine.Option(names = "--dest", required = true, description = "Destination PDF")
+        private Path destination;
+
+        @CommandLine.Option(names = "--pkcs12", description = "Signer PKCS#12 file")
+        private Path pkcs12;
+
+        @CommandLine.Option(names = "--password", description = "Password for PKCS#12 (default 123456)")
+        private String password;
+
+        @CommandLine.Option(names = "--page", defaultValue = "1", description = "Page number")
         private int page;
 
-        @CommandLine.Option(names = "--x", required = false, defaultValue = "72", description = "Lower-left X coordinate in points")
+        @CommandLine.Option(names = "--x", defaultValue = "72", description = "Lower-left X coordinate")
         private float x;
 
-        @CommandLine.Option(names = "--y", required = false, defaultValue = "72", description = "Lower-left Y coordinate in points")
+        @CommandLine.Option(names = "--y", defaultValue = "72", description = "Lower-left Y coordinate")
         private float y;
 
-        @CommandLine.Option(names = "--width", required = false, defaultValue = "180", description = "Signature width in points")
+        @CommandLine.Option(names = "--width", defaultValue = "180", description = "Signature width")
         private float width;
 
-        @CommandLine.Option(names = "--height", required = false, defaultValue = "72", description = "Signature height in points")
+        @CommandLine.Option(names = "--height", defaultValue = "72", description = "Signature height")
         private float height;
 
-        @CommandLine.Option(names = "--field", required = false, defaultValue = "sig_electronic", description = "Signature field name to use or create")
+        @CommandLine.Option(names = "--field", defaultValue = "sig_electronic", description = "Signature field name")
         private String fieldName;
 
-        @CommandLine.Option(names = "--signer", required = false, description = "Signer display name for the signature dictionary")
+        @CommandLine.Option(names = "--signer", description = "Signer display name")
         private String signer;
 
-        @CommandLine.Option(names = "--reason", required = false, defaultValue = "电子签名", description = "Reason string stored in the signature dictionary")
+        @CommandLine.Option(names = "--reason", defaultValue = "电子签名", description = "Reason string")
         private String reason;
 
-        @CommandLine.Option(names = "--location", required = false, defaultValue = "Ward A", description = "Location stored in the signature dictionary")
+        @CommandLine.Option(names = "--location", defaultValue = "Ward A", description = "Location string")
         private String location;
 
-        @CommandLine.Option(names = "--contact", required = false, defaultValue = "nurse-signer@example.com", description = "Contact info stored in the signature dictionary")
+        @CommandLine.Option(names = "--contact", defaultValue = "nurse-signer@example.com", description = "Contact info")
         private String contact;
 
-        @CommandLine.Option(names = "--cjk-font", required = false, description = "Path to a CJK font (e.g., NotoSansCJKsc-Regular.otf)")
+        @CommandLine.Option(names = "--cjk-font", description = "Optional CJK font for appearance")
         private java.io.File cjkFont;
 
-        @CommandLine.Option(names = "--debug-fonts", description = "Print AcroForm DA/DR/Font diagnostics")
-        private boolean debugFonts;
+        @CommandLine.Option(names = "--tsa", description = "Optional TSA URL")
+        private String tsaUrl;
 
         @Override
         public Integer call() throws Exception {
@@ -90,177 +183,33 @@ public class App {
             params.setReason(reason);
             params.setLocation(location);
             params.setContact(contact);
-            Path resolvedCjk = null;
             if (cjkFont != null) {
-                Path candidate = cjkFont.toPath().toAbsolutePath();
-                if (Files.isRegularFile(candidate)) {
-                    resolvedCjk = candidate;
+                Path resolved = cjkFont.toPath().toAbsolutePath();
+                if (Files.isRegularFile(resolved)) {
+                    params.setCjkFontPath(resolved);
                 } else {
-                    System.err.println("[sign-electronic] --cjk-font not found or not a file, falling back to Helvetica: "
-                            + candidate);
+                    System.err.println("[sign-electronic] Ignoring missing font: " + resolved);
                 }
             }
-            params.setCjkFontPath(resolvedCjk);
-            params.setDebugFonts(debugFonts);
-            ElectronicSignatureSigner.sign(params);
-            return 0;
-        }
-    }
-
-    @CommandLine.Command(name = "app", mixinStandardHelpOptions = true,
-            subcommands = {
-                    CreateTemplate.class,
-                    SignRow.class,
-                    VerifyPdf.class,
-                    CompareStructure.class,
-                    DebugStructure.class,
-                    FixWidgets.class,
-                    SanitizeAcroform.class,
-                    SignElectronic.class,
-                    Certify.class,
-                    GenDemoP12.class
-            })
-    static class Root implements Runnable {
-        @Override
-        public void run() {
-            CommandLine.usage(this, System.out);
-        }
-    }
-
-    @CommandLine.Command(name = "create-template", description = "Create a nursing record template PDF with DocMDP certification")
-    static class CreateTemplate implements Callable<Integer> {
-        @CommandLine.Option(names = "--out", required = true, description = "Destination PDF file")
-        private Path output;
-
-        @CommandLine.Option(names = "--rows", defaultValue = "3", description = "Number of rows to create")
-        private int rows;
-
-        @CommandLine.Option(names = "--certP12", required = false, description = "Path to PKCS#12 file for certification")
-        private Path certPath;
-
-        @CommandLine.Option(names = "--password", required = false, description = "Password for PKCS#12")
-        private String password;
-
-        @Override
-        public Integer call() throws Exception {
-            System.out.println("[create-template] Starting");
-            String dest = output.toAbsolutePath().toString();
-            if (certPath != null) {
-                String temp = dest + ".tmp";
-                NursingRecordTemplate.createTemplate(temp, rows);
-                NursingRecordSigner.certifyDocument(temp, dest, certPath.toAbsolutePath().toString(), password);
-                Files.deleteIfExists(Path.of(temp));
-                System.out.println("[create-template] Template certified and written to " + output.toAbsolutePath());
-            } else {
-                NursingRecordTemplate.createTemplate(dest, rows);
-                System.out.println("[create-template] Template written to " + output.toAbsolutePath());
-            }
-            return 0;
-        }
-    }
-
-    @CommandLine.Command(name = "sign-row", description = "Fill a row and append a FieldMDP-locked signature")
-    static class SignRow implements Callable<Integer> {
-        @CommandLine.Option(names = "--src", required = true, description = "Source PDF to sign")
-        private Path source;
-
-        @CommandLine.Option(names = "--dest", required = true, description = "Destination PDF with appended signature")
-        private Path destination;
-
-        @CommandLine.Option(names = "--row", required = true, description = "Row number to sign (1-based)")
-        private int row;
-
-        @CommandLine.Option(names = "--time", required = true, description = "Row time text")
-        private String time;
-
-        @CommandLine.Option(names = "--text", required = true, description = "Nursing note text")
-        private String text;
-
-        @CommandLine.Option(names = "--nurse", required = true, description = "Nurse name")
-        private String nurse;
-
-        @CommandLine.Option(names = "--pkcs12", required = false, description = "Signer PKCS#12 file")
-        private Path pkcs12;
-
-        @CommandLine.Option(names = "--password", required = false, description = "Password for PKCS#12")
-        private String password;
-
-        @CommandLine.Option(names = "--tsaUrl", required = false, description = "Optional TSA URL")
-        private String tsaUrl;
-
-        @CommandLine.Option(names = "--mode", required = false, description = "Signing mode: template, inject, or auto", defaultValue = "auto")
-        private String mode;
-
-        @CommandLine.Option(names = "--page", required = false, description = "Page number where the row lives", defaultValue = "1")
-        private int page;
-
-        @CommandLine.Option(names = "--certify-on-first-inject", description = "Apply DocMDP certification when injecting for the first time")
-        private boolean certifyOnFirstInject;
-
-        @Override
-        public Integer call() throws Exception {
-            if (row < 1) {
-                throw new IllegalArgumentException("Row must be at least 1");
-            }
-            NursingRecordSigner.SignParams params = new NursingRecordSigner.SignParams();
-            params.setSource(source.toAbsolutePath().toString());
-            params.setDestination(destination.toAbsolutePath().toString());
-            params.setRow(row);
-            params.setTimeValue(time);
-            params.setTextValue(text);
-            params.setNurse(nurse);
-            params.setPkcs12Path(pkcs12 != null ? pkcs12.toAbsolutePath().toString() : null);
-            params.setPassword(password);
             params.setTsaUrl(tsaUrl);
-            params.setMode(mode);
-            params.setPage(page);
-            params.setCertifyOnFirstInject(certifyOnFirstInject);
-            NursingRecordSigner.signRow(params);
-            System.out.println("[sign-row] Signed row " + row + " -> " + destination.toAbsolutePath());
+            ElectronicSignatureSigner.sign(params);
+            System.out.println("[sign-electronic] Signature appended -> " + destination.toAbsolutePath());
             return 0;
         }
     }
 
-    @CommandLine.Command(name = "verify", description = "Verify signatures and list FieldMDP locks")
+    @CommandLine.Command(name = "verify", description = "Verify signatures in a PDF")
     static class VerifyPdf implements Callable<Integer> {
-        @CommandLine.Option(names = "--pdf", required = false, description = "PDF to verify")
-        private Path pdf;
-
-        @CommandLine.Parameters(index = "0", arity = "0..1", description = "PDF to verify")
-        private Path positional;
-
-        @Override
-        public Integer call() throws Exception {
-            Path target = pdf != null ? pdf : positional;
-            if (pdf != null && positional != null && !pdf.equals(positional)) {
-                throw new CommandLine.ParameterException(new CommandLine(this),
-                        "Specify either --pdf or positional argument (not both) or ensure they match.");
-            }
-            if (target == null) {
-                throw new CommandLine.ParameterException(new CommandLine(this),
-                        "No PDF specified. Use --pdf <file> or provide a positional argument.");
-            }
-            int rc = SignatureVerifier.verify(target.toAbsolutePath().toString());
-            if (rc != 0) {
-                return rc;
-            }
-            return 0;
-        }
-    }
-
-    @CommandLine.Command(name = "debug-structure", description = "Dump signature field structure for Adobe troubleshooting")
-    static class DebugStructure implements Callable<Integer> {
-        @CommandLine.Option(names = "--pdf", required = true, description = "PDF to inspect")
+        @CommandLine.Option(names = "--pdf", required = true, description = "PDF file to verify")
         private Path pdf;
 
         @Override
         public Integer call() throws Exception {
-            int rc = PdfStructureDebugger.inspect(pdf.toAbsolutePath());
-            return rc;
+            return SignatureVerifier.verify(pdf.toAbsolutePath().toString());
         }
     }
 
-    @CommandLine.Command(name = "certify", description = "Apply DocMDP certification to an existing PDF in append mode")
+    @CommandLine.Command(name = "certify", description = "Apply DocMDP certification in append mode")
     static class Certify implements Callable<Integer> {
         @CommandLine.Option(names = "--src", required = true, description = "Source PDF")
         private Path source;
@@ -268,39 +217,19 @@ public class App {
         @CommandLine.Option(names = "--dest", required = true, description = "Destination PDF")
         private Path destination;
 
-        @CommandLine.Option(names = "--certP12", required = false, description = "PKCS#12 file for certification")
-        private Path cert;
+        @CommandLine.Option(names = "--certP12", description = "PKCS#12 file")
+        private Path certPath;
 
-        @CommandLine.Option(names = "--password", required = false, description = "Password for the PKCS#12")
+        @CommandLine.Option(names = "--password", description = "Password for PKCS#12 (default 123456)")
         private String password;
 
         @Override
         public Integer call() throws Exception {
-            DemoKeystoreUtil.ensureProvider();
-            String certPath = cert != null ? cert.toAbsolutePath().toString() : null;
-            NursingRecordSigner.certifyDocument(source.toAbsolutePath().toString(), destination.toAbsolutePath().toString(), certPath, password);
+            NursingRecordSigner.certifyDocument(source.toAbsolutePath().toString(),
+                    destination.toAbsolutePath().toString(),
+                    certPath != null ? certPath.toAbsolutePath().toString() : null,
+                    password);
             System.out.println("[certify] Certification applied -> " + destination.toAbsolutePath());
-            return 0;
-        }
-    }
-
-    @CommandLine.Command(name = "fix-widgets", description = "Repair signature widget flags and appearance in append mode")
-    static class FixWidgets implements Callable<Integer> {
-
-        @CommandLine.Option(names = "--pdf", required = true, description = "Source PDF with hidden signatures")
-        private Path source;
-
-        @CommandLine.Option(names = "--dest", required = true, description = "Destination PDF with repaired widgets")
-        private Path destination;
-
-        @Override
-        public Integer call() throws Exception {
-            if (source.equals(destination)) {
-                throw new CommandLine.ParameterException(new CommandLine(this),
-                        "Source and destination must differ to preserve the original revision");
-            }
-            SignatureWidgetRepairer.repair(source.toAbsolutePath(), destination.toAbsolutePath());
-            System.out.println("[fix-widgets] Repaired widgets -> " + destination.toAbsolutePath());
             return 0;
         }
     }
@@ -323,42 +252,4 @@ public class App {
             return 0;
         }
     }
-
-    @CommandLine.Command(name = "compare-structure", description = "Diff test PDF against golden PDF (Acrobat-friendly)")
-    static class CompareStructure implements Callable<Integer> {
-        @CommandLine.Option(names = "--gold", required = true, description = "Reference PDF with Acrobat-friendly structure")
-        private Path gold;
-
-        @CommandLine.Option(names = "--test", required = true, description = "Test PDF to compare against the golden reference")
-        private Path test;
-
-        @Override
-        public Integer call() throws Exception {
-            PdfStructureDump golden = PdfStructureDump.load(gold);
-            PdfStructureDump candidate = PdfStructureDump.load(test);
-            PdfStructureDiff.DiffResult diff = PdfStructureDiff.diff(golden, candidate);
-            diff.printTo(System.out);
-            return PdfStructureDiff.hasAcrobatBlockers(candidate) ? 2 : 0;
-        }
-    }
-
-    @CommandLine.Command(name = "sanitize-acroform", description = "Normalize AcroForm/Widgets for Acrobat visibility (append-only)")
-    static class SanitizeAcroform implements Callable<Integer> {
-        @CommandLine.Option(names = "--src", required = true, description = "Source PDF to sanitize")
-        private Path src;
-
-        @CommandLine.Option(names = "--dest", required = true, description = "Destination PDF written with append-only fixes")
-        private Path dest;
-
-        @CommandLine.Option(names = "--field", required = false, description = "Signature field name to ensure exists", defaultValue = "sig_row_1")
-        private String fieldName;
-
-        @Override
-        public Integer call() throws Exception {
-            new PostSignSanitizer().sanitize(src, dest, fieldName);
-            return 0;
-        }
-    }
-
 }
-
