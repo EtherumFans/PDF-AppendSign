@@ -1,90 +1,59 @@
 package com.demo.pdf;
 
 import com.demo.crypto.DemoKeystoreUtil;
-import com.itextpdf.forms.PdfAcroForm;
-import com.itextpdf.forms.fields.PdfFormField;
-import com.itextpdf.forms.fields.PdfSignatureFormField;
-import com.itextpdf.io.font.PdfEncodings;
-import com.itextpdf.io.font.constants.StandardFonts;
-import com.itextpdf.kernel.colors.ColorConstants;
-import com.itextpdf.kernel.font.PdfFont;
-import com.itextpdf.kernel.font.PdfFontFactory;
-import com.itextpdf.kernel.geom.Rectangle;
-import com.itextpdf.kernel.pdf.PdfArray;
-import com.itextpdf.kernel.pdf.PdfDate;
-import com.itextpdf.kernel.pdf.PdfDictionary;
-import com.itextpdf.kernel.pdf.PdfDocument;
-import com.itextpdf.kernel.pdf.PdfName;
-import com.itextpdf.kernel.pdf.PdfPage;
-import com.itextpdf.kernel.pdf.PdfReader;
-import com.itextpdf.kernel.pdf.PdfResources;
-import com.itextpdf.kernel.pdf.PdfString;
-import com.itextpdf.kernel.pdf.StampingProperties;
-import com.itextpdf.kernel.pdf.annot.PdfAnnotation;
-import com.itextpdf.kernel.pdf.annot.PdfWidgetAnnotation;
-import com.itextpdf.kernel.pdf.canvas.PdfCanvas;
-import com.itextpdf.kernel.pdf.canvas.PdfCanvasConstants;
-import com.itextpdf.kernel.pdf.xobject.PdfFormXObject;
-import com.itextpdf.layout.Canvas;
-import com.itextpdf.layout.properties.TextAlignment;
-import com.itextpdf.signatures.BouncyCastleDigest;
-import com.itextpdf.signatures.DigestAlgorithms;
-import com.itextpdf.signatures.IExternalDigest;
-import com.itextpdf.signatures.IExternalSignature;
-import com.itextpdf.signatures.PdfSignature;
-import com.itextpdf.signatures.PdfSignatureAppearance;
-import com.itextpdf.signatures.PdfSigner;
-import com.itextpdf.signatures.PrivateKeySignature;
+import com.itextpdf.text.Font;
+import com.itextpdf.text.pdf.BaseFont;
+import com.itextpdf.text.pdf.PdfReader;
+import com.itextpdf.text.pdf.PdfSignatureAppearance;
+import com.itextpdf.text.pdf.PdfStamper;
+import com.itextpdf.text.pdf.security.BouncyCastleDigest;
+import com.itextpdf.text.pdf.security.DigestAlgorithms;
+import com.itextpdf.text.pdf.security.ExternalDigest;
+import com.itextpdf.text.pdf.security.ExternalSignature;
+import com.itextpdf.text.pdf.security.MakeSignature;
+import com.itextpdf.text.pdf.security.PrivateKeySignature;
+import com.itextpdf.text.pdf.security.TSAClientBouncyCastle;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 
-import java.io.BufferedOutputStream;
-import java.io.IOException;
-import java.io.OutputStream;
+import java.io.FileOutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.security.KeyStore;
 import java.security.PrivateKey;
 import java.security.Security;
-import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
+import java.util.Arrays;
 import java.util.Calendar;
 import java.util.TimeZone;
 
 /**
- * Signs a PDF by appending a single signature field whose appearance mimics a handwritten e-signature.
+ * Append a visible electronic signature using iText 5 APIs.
  */
 public final class ElectronicSignatureSigner {
 
-    private static final String DEFAULT_CONTACT = "nurse-signer@example.com";
+    private static final TimeZone SIGN_TIMEZONE = TimeZone.getTimeZone("UTC");
 
-    private final Params params;
-    private final Path cjkFontPath;
-    private final boolean debugFonts;
-
-    private ElectronicSignatureSigner(Params params) {
-        this.params = params;
-        this.cjkFontPath = params.getCjkFontPath();
-        this.debugFonts = params.isDebugFonts();
+    private ElectronicSignatureSigner() {
     }
 
-    public static final class Params {
+    public static class Params {
         private String source;
         private String destination;
         private String pkcs12Path;
         private String password;
-        private String fieldName = "sig_electronic";
         private int page = 1;
-        private float x = 72f;
-        private float y = 72f;
+        private float x;
+        private float y;
         private float width = 180f;
         private float height = 72f;
+        private String fieldName = "sig_electronic";
         private String signerName;
         private String reason = "电子签名";
         private String location = "Ward A";
-        private String contact = DEFAULT_CONTACT;
-        private Path cjkFontPath;
+        private String contact = "nurse-signer@example.com";
+        private java.nio.file.Path cjkFontPath;
         private boolean debugFonts;
+        private String tsaUrl;
 
         public String getSource() {
             return source;
@@ -116,16 +85,6 @@ public final class ElectronicSignatureSigner {
 
         public void setPassword(String password) {
             this.password = password;
-        }
-
-        public String getFieldName() {
-            return fieldName;
-        }
-
-        public void setFieldName(String fieldName) {
-            if (fieldName != null && !fieldName.isBlank()) {
-                this.fieldName = fieldName;
-            }
         }
 
         public int getPage() {
@@ -168,6 +127,14 @@ public final class ElectronicSignatureSigner {
             this.height = height;
         }
 
+        public String getFieldName() {
+            return fieldName;
+        }
+
+        public void setFieldName(String fieldName) {
+            this.fieldName = fieldName;
+        }
+
         public String getSignerName() {
             return signerName;
         }
@@ -181,9 +148,7 @@ public final class ElectronicSignatureSigner {
         }
 
         public void setReason(String reason) {
-            if (reason != null && !reason.isBlank()) {
-                this.reason = reason;
-            }
+            this.reason = reason;
         }
 
         public String getLocation() {
@@ -191,9 +156,7 @@ public final class ElectronicSignatureSigner {
         }
 
         public void setLocation(String location) {
-            if (location != null && !location.isBlank()) {
-                this.location = location;
-            }
+            this.location = location;
         }
 
         public String getContact() {
@@ -201,16 +164,14 @@ public final class ElectronicSignatureSigner {
         }
 
         public void setContact(String contact) {
-            if (contact != null && !contact.isBlank()) {
-                this.contact = contact;
-            }
+            this.contact = contact;
         }
 
-        public Path getCjkFontPath() {
+        public java.nio.file.Path getCjkFontPath() {
             return cjkFontPath;
         }
 
-        public void setCjkFontPath(Path cjkFontPath) {
+        public void setCjkFontPath(java.nio.file.Path cjkFontPath) {
             this.cjkFontPath = cjkFontPath;
         }
 
@@ -221,371 +182,110 @@ public final class ElectronicSignatureSigner {
         public void setDebugFonts(boolean debugFonts) {
             this.debugFonts = debugFonts;
         }
+
+        public String getTsaUrl() {
+            return tsaUrl;
+        }
+
+        public void setTsaUrl(String tsaUrl) {
+            this.tsaUrl = tsaUrl;
+        }
     }
 
     public static void sign(Params params) throws Exception {
-        if (params == null) {
-            throw new IllegalArgumentException("Params must not be null");
+        Path src = Path.of(params.getSource());
+        Path dest = Path.of(params.getDestination());
+        if (src.toAbsolutePath().equals(dest.toAbsolutePath())) {
+            throw new IllegalArgumentException("Source and destination must differ to avoid truncation");
         }
-        new ElectronicSignatureSigner(params).signInternal();
-    }
-
-    private void signInternal() throws Exception {
-        Params params = this.params;
-        DemoKeystoreUtil.ensureProvider();
-        Path srcPath = Path.of(params.getSource());
-        Path destPath = Path.of(params.getDestination());
-        if (!Files.exists(srcPath)) {
-            throw new IllegalStateException("Source PDF does not exist: " + srcPath);
-        }
-        if (params.getWidth() <= 0 || params.getHeight() <= 0) {
-            throw new IllegalArgumentException("Signature rectangle must have positive width and height");
-        }
-        PdfSanityUtil.requireHeader(srcPath);
-        PdfSanityUtil.requireVersionAtLeast(srcPath, "1.6");
-
-        char[] password = params.getPassword() != null ? params.getPassword().toCharArray() : "123456".toCharArray();
-        String pkcs12Path = params.getPkcs12Path();
-        if (pkcs12Path == null || pkcs12Path.isBlank()) {
-            pkcs12Path = DemoKeystoreUtil.createDemoP12().toAbsolutePath().toString();
-            System.out.println("[sign-electronic] Using generated demo PKCS#12: " + pkcs12Path);
-        }
-        KeyMaterial keyMaterial = loadKeyMaterial(pkcs12Path, password);
-
-        long originalSize = Files.size(srcPath);
-        Path parent = destPath.getParent();
+        Path parent = dest.toAbsolutePath().getParent();
         if (parent != null) {
             Files.createDirectories(parent);
         }
 
-        PdfDocument document = null;
-        Rectangle rect = new Rectangle(params.getX(), params.getY(), params.getWidth(), params.getHeight());
+        KeyMaterial material = loadKeyMaterial(params.getPkcs12Path(), params.getPassword());
+        DocMDPUtil.ensureProvider();
+
         try (PdfReader reader = new PdfReader(params.getSource());
-             OutputStream os = new BufferedOutputStream(Files.newOutputStream(destPath,
-                     StandardOpenOption.CREATE,
-                     StandardOpenOption.TRUNCATE_EXISTING,
-                     StandardOpenOption.WRITE))) {
-            PdfSigner signer = new PdfSigner(reader, os, new StampingProperties().useAppendMode());
-            document = signer.getDocument();
-            if (params.getPage() < 1 || params.getPage() > document.getNumberOfPages()) {
-                throw new IllegalArgumentException("Page " + params.getPage() + " is out of bounds");
-            }
-
-            PdfSignatureFormField signatureField;
-            try {
-                signatureField = ensureSignatureField(document, params.getPage(), params.getFieldName(), rect);
-            } catch (Exception ex) {
-                System.err.println("[sign-electronic] Failed to ensure signature field '" + params.getFieldName()
-                        + "' on page " + params.getPage() + " rect=" + rect + ": " + ex.getMessage());
-                if (debugFonts) {
-                    dumpDA_DR(document, "ON_ERROR_AFTER_NORMALIZE");
-                }
-                throw ex;
-            }
-            ensureFieldNotSigned(document, params.getFieldName());
-
-            signer.setFieldName(params.getFieldName());
-            Calendar signDate = Calendar.getInstance(TimeZone.getTimeZone("UTC"));
-            PdfSignatureAppearance appearance = signer.getSignatureAppearance();
-            appearance.setReuseAppearance(false);
-            appearance.setPageNumber(params.getPage());
-            appearance.setPageRect(rect);
+             FileOutputStream os = new FileOutputStream(dest.toFile())) {
+            PdfStamper stamper = PdfStamper.createSignature(reader, os, '\0', null, true);
+            PdfSignatureAppearance appearance = stamper.getSignatureAppearance();
             appearance.setReason(params.getReason());
             appearance.setLocation(params.getLocation());
             appearance.setContact(params.getContact());
-            if (keyMaterial.certificate != null) {
-                appearance.setCertificate(keyMaterial.certificate);
+            appearance.setSignDate(Calendar.getInstance(SIGN_TIMEZONE));
+            if (material.chain.length > 0) {
+                appearance.setCertificate(material.chain[0]);
             }
-            appearance.setLayer2Text("");
-            drawSignatureGraphic(appearance, document);
+            float llx = params.getX();
+            float lly = params.getY();
+            float urx = llx + params.getWidth();
+            float ury = lly + params.getHeight();
+            appearance.setVisibleSignature(new com.itextpdf.text.Rectangle(llx, lly, urx, ury), params.getPage(), params.getFieldName());
 
-            String signerName = params.getSignerName();
-            if (signerName == null || signerName.isBlank()) {
-                signerName = keyMaterial.certificate != null
-                        ? keyMaterial.certificate.getSubjectX500Principal().getName()
-                        : "Signer";
+            BaseFont layerFont = resolveFont(params.getCjkFontPath());
+            if (layerFont != null) {
+                appearance.setLayer2Font(new Font(layerFont, 12f));
             }
-            signer.setSignDate(signDate);
-            String reason = params.getReason();
-            String location = params.getLocation();
-            String finalSignerName = signerName;
-            Calendar finalSignDate = (Calendar) signDate.clone();
-            signer.setSignatureEvent(signature -> configureSignatureDictionary(signature, finalSignerName, reason, location, finalSignDate));
+            String signer = params.getSignerName() == null || params.getSignerName().isBlank()
+                    ? "Signer"
+                    : params.getSignerName();
+            String layerText = String.format("签署人: %s\n理由: %s\n地点: %s",
+                    signer,
+                    params.getReason() == null ? "" : params.getReason(),
+                    params.getLocation() == null ? "" : params.getLocation());
+            appearance.setLayer2Text(layerText);
 
-            IExternalSignature pks = new PrivateKeySignature(keyMaterial.key, DigestAlgorithms.SHA256, BouncyCastleProvider.PROVIDER_NAME);
-            IExternalDigest digest = new BouncyCastleDigest();
-            assertWidgetPrintable(signatureField);
-            signer.signDetached(digest, pks, keyMaterial.chain, null, null, null, 0, PdfSigner.CryptoStandard.CMS);
-        } finally {
-            if (document != null && !document.isClosed()) {
-                document.close();
+            ExternalDigest digest = new BouncyCastleDigest();
+            ExternalSignature signature = new PrivateKeySignature(material.key, DigestAlgorithms.SHA256, BouncyCastleProvider.PROVIDER_NAME);
+            TSAClientBouncyCastle tsaClient = null;
+            if (params.getTsaUrl() != null && !params.getTsaUrl().isBlank()) {
+                tsaClient = new TSAClientBouncyCastle(params.getTsaUrl());
             }
-        }
-
-        long newSize = Files.size(destPath);
-        if (newSize <= originalSize) {
-            throw new IllegalStateException("Destination PDF did not grow after signing; aborting to avoid overwriting");
-        }
-        PostSignValidator.validate(destPath.toString(), params.getFieldName());
-        PostSignValidator.strictTailCheck(destPath);
-        System.out.println("[sign-electronic] Signature applied in append mode -> " + destPath.toAbsolutePath());
-    }
-
-    private PdfSignatureFormField ensureSignatureField(PdfDocument pdfDoc,
-                                                       int pageIndex,
-                                                       String fieldName,
-                                                       Rectangle rect) throws Exception {
-        if (debugFonts) {
-            dumpDA_DR(pdfDoc, "BEFORE_NORMALIZE");
-        }
-        PdfAcroformNormalizer.normalizeToHelvOnly(pdfDoc);
-        if (debugFonts) {
-            dumpDA_DR(pdfDoc, "AFTER_NORMALIZE");
-        }
-
-        PdfAcroForm af = PdfAcroForm.getAcroForm(pdfDoc, true);
-        PdfSignatureFormField sigField;
-        PdfFormField existing = af.getField(fieldName);
-        if (existing != null) {
-            if (!(existing instanceof PdfSignatureFormField)) {
-                throw new IllegalStateException("Field '" + fieldName + "' is not a signature field");
-            }
-            sigField = (PdfSignatureFormField) existing;
-        } else {
-            sigField = PdfSignatureFormField.createSignature(pdfDoc, rect);
-            sigField.setFieldName(fieldName);
-            FormUtil.setFieldDefaultAppearance(sigField);
-            af.addField(sigField, pdfDoc.getPage(pageIndex));
-        }
-
-        FormUtil.setFieldDefaultAppearance(sigField);
-
-        java.util.List<PdfWidgetAnnotation> widgets = sigField.getWidgets();
-        PdfWidgetAnnotation widget = widgets != null && !widgets.isEmpty() ? widgets.get(0) : null;
-        if (widget != null) {
-            widget.setFlag(PdfAnnotation.PRINT);
-            widget.resetFlag(PdfAnnotation.INVISIBLE);
-            widget.resetFlag(PdfAnnotation.HIDDEN);
-            widget.resetFlag(PdfAnnotation.NO_VIEW);
-            widget.resetFlag(PdfAnnotation.TOGGLE_NO_VIEW);
-            widget.setRectangle(new PdfArray(rect));
-
-            PdfPage page = pdfDoc.getPage(pageIndex);
-            boolean present = false;
-            for (PdfAnnotation annotation : page.getAnnotations()) {
-                if (annotation.getPdfObject() == widget.getPdfObject()) {
-                    present = true;
-                    break;
-                }
-            }
-            if (!present) {
-                page.addAnnotation(widget);
-            }
-
-            ensureNormalAppearance(pdfDoc, widget, rect);
-        }
-        return sigField;
-    }
-
-    private void ensureNormalAppearance(PdfDocument pdfDoc,
-                                        PdfWidgetAnnotation widget,
-                                        Rectangle rect) throws Exception {
-        PdfFormXObject xobj = new PdfFormXObject(rect);
-        PdfCanvas pdfCanvas = new PdfCanvas(xobj, pdfDoc);
-
-        pdfCanvas.saveState();
-        pdfCanvas.setLineWidth(1f);
-        pdfCanvas.rectangle(0.5f, 0.5f, rect.getWidth() - 1f, rect.getHeight() - 1f);
-        pdfCanvas.stroke();
-        pdfCanvas.restoreState();
-
-        PdfFont font;
-        String text;
-        if (this.cjkFontPath != null) {
-            try {
-                byte[] fontBytes = Files.readAllBytes(this.cjkFontPath);
-                font = PdfFontFactory.createFont(fontBytes, PdfEncodings.IDENTITY_H,
-                        PdfFontFactory.EmbeddingStrategy.PREFER_EMBEDDED);
-                text = "已签名";
-            } catch (IOException ex) {
-                System.err.println("[sign-electronic] Failed to load CJK font '" + this.cjkFontPath
-                        + "'. Falling back to Helvetica. Reason: " + ex.getMessage());
-                font = PdfFontFactory.createFont(StandardFonts.HELVETICA);
-                text = "Signed";
-            }
-        } else {
-            font = PdfFontFactory.createFont(StandardFonts.HELVETICA);
-            text = "Signed";
-        }
-        PdfResources resources = xobj.getResources();
-        if (resources == null) {
-            resources = new PdfResources();
-            xobj.put(PdfName.Resources, resources.getPdfObject());
-        }
-        resources.addFont(pdfDoc, font);
-
-        try (Canvas layout = new Canvas(pdfCanvas, rect)) {
-            layout.setFont(font).setFontSize(10);
-            layout.showTextAligned(text, rect.getWidth() / 2f, rect.getHeight() / 2f, TextAlignment.CENTER);
-        }
-        pdfCanvas.release();
-
-        widget.setAppearance(PdfName.N, xobj.getPdfObject());
-        widget.getPdfObject().setModified();
-    }
-
-    private static void dumpDA_DR(PdfDocument doc, String tag) {
-        PdfDictionary acro = doc.getCatalog().getPdfObject().getAsDictionary(PdfName.AcroForm);
-        System.out.println("=== [dumpAcroFormFonts] " + tag + " ===");
-        if (acro == null) {
-            System.out.println("No AcroForm.");
-            return;
-        }
-        System.out.println("DA: " + acro.get(PdfName.DA));
-        PdfDictionary dr = acro.getAsDictionary(PdfName.DR);
-        System.out.println("DR present: " + (dr != null));
-        PdfDictionary fonts = dr != null ? dr.getAsDictionary(PdfName.Font) : null;
-        if (fonts == null) {
-            System.out.println("DR.Font: null");
-            return;
-        }
-        System.out.println("DR.Font keys: " + fonts.keySet());
-        for (PdfName key : fonts.keySet()) {
-            PdfDictionary fd = fonts.getAsDictionary(key);
-            PdfName type = fd != null ? fd.getAsName(PdfName.Type) : null;
-            PdfName subtype = fd != null ? fd.getAsName(PdfName.Subtype) : null;
-            System.out.println("  - " + key + " -> isDict=" + (fd != null)
-                    + ", Type=" + type + ", Subtype=" + subtype);
+            MakeSignature.signDetached(appearance, digest, signature, material.chain, null, null, tsaClient, 0, MakeSignature.CryptoStandard.CMS);
         }
     }
 
-    private static void drawSignatureGraphic(PdfSignatureAppearance appearance, PdfDocument document) {
-        PdfFormXObject layer2 = appearance.getLayer2();
-        if (layer2 == null) {
-            return;
+    private static BaseFont resolveFont(java.nio.file.Path cjkFont) {
+        if (cjkFont == null) {
+            return null;
         }
-        Rectangle bbox = layer2.getBBox().toRectangle();
-        PdfCanvas canvas = new PdfCanvas(layer2, document);
-        canvas.saveState();
-        canvas.setFillColor(ColorConstants.WHITE);
-        canvas.rectangle(0, 0, bbox.getWidth(), bbox.getHeight());
-        canvas.fill();
-        canvas.restoreState();
-
-        float designWidth = 300f;
-        float designHeight = 110f;
-        float inset = 12f;
-        float usableWidth = bbox.getWidth() - inset * 2;
-        float usableHeight = bbox.getHeight() - inset * 2;
-        float scale = Math.min(usableWidth / designWidth, usableHeight / designHeight);
-        if (scale <= 0) {
-            scale = 1f;
-        }
-        float offsetX = (bbox.getWidth() - designWidth * scale) / 2f;
-        float offsetY = (bbox.getHeight() - designHeight * scale) / 2f;
-
-        float[][][] strokes = new float[][][]{
-                {{10f, 10f}, {40f, 90f}, {70f, 20f}, {110f, 70f}},
-                {{120f, 30f}, {140f, 80f}, {160f, 20f}, {190f, 70f}},
-                {{200f, 25f}, {220f, 85f}, {250f, 15f}, {280f, 70f}},
-                {{40f, 60f}, {70f, 105f}, {110f, 60f}},
-                {{160f, 60f}, {190f, 100f}, {230f, 55f}, {270f, 95f}}
-        };
-
-        canvas.saveState();
-        canvas.setLineWidth(3f);
-        canvas.setStrokeColor(ColorConstants.BLACK);
-        canvas.setLineCapStyle(PdfCanvasConstants.LineCapStyle.ROUND);
-        for (float[][] stroke : strokes) {
-            if (stroke.length < 2) {
-                continue;
+        try {
+            if (Files.isRegularFile(cjkFont)) {
+                return BaseFont.createFont(cjkFont.toAbsolutePath().toString(), BaseFont.IDENTITY_H, BaseFont.EMBEDDED);
             }
-            canvas.moveTo(offsetX + stroke[0][0] * scale, offsetY + stroke[0][1] * scale);
-            for (int i = 1; i < stroke.length; i++) {
-                canvas.lineTo(offsetX + stroke[i][0] * scale, offsetY + stroke[i][1] * scale);
-            }
-            canvas.stroke();
+        } catch (Exception e) {
+            System.err.println("[sign-electronic] Unable to load custom font: " + e.getMessage());
         }
-        canvas.restoreState();
-        canvas.release();
+        return null;
     }
 
-    private static void ensureFieldNotSigned(PdfDocument document, String fieldName) throws IOException {
-        com.itextpdf.signatures.SignatureUtil util = new com.itextpdf.signatures.SignatureUtil(document);
-        if (util.getSignatureNames().contains(fieldName)) {
-            throw new IllegalStateException("Signature field already signed: " + fieldName);
+    private static KeyMaterial loadKeyMaterial(String pkcs12Path, String password) throws Exception {
+        char[] pwd = password != null ? password.toCharArray() : "123456".toCharArray();
+        String effective = pkcs12Path;
+        if (effective == null) {
+            effective = DemoKeystoreUtil.createDemoP12().toAbsolutePath().toString();
+            System.out.println("[sign-electronic] Using generated demo PKCS#12: " + effective);
         }
-    }
-
-    private static void assertWidgetPrintable(com.itextpdf.forms.fields.PdfSignatureFormField field) {
-        if (field == null) {
-            throw new IllegalArgumentException("Signature field must not be null");
-        }
-        java.util.List<PdfWidgetAnnotation> widgets = field.getWidgets();
-        if (widgets == null || widgets.isEmpty()) {
-            throw new IllegalStateException("Signature field has no widget annotation: " + field.getFieldName());
-        }
-        PdfWidgetAnnotation widget = widgets.get(0);
-        int flags = widget.getFlags();
-        if ((flags & PdfAnnotation.PRINT) == 0) {
-            throw new IllegalStateException("Signature widget is not printable: " + field.getFieldName());
-        }
-        if ((flags & (PdfAnnotation.INVISIBLE | PdfAnnotation.HIDDEN | PdfAnnotation.NO_VIEW | PdfAnnotation.TOGGLE_NO_VIEW)) != 0) {
-            throw new IllegalStateException("Signature widget is hidden: " + field.getFieldName());
-        }
-    }
-
-    private static void configureSignatureDictionary(PdfSignature signature,
-                                                      String signerName,
-                                                      String reason,
-                                                      String location,
-                                                      Calendar signDate) {
-        if (signature == null) {
-            return;
-        }
-        signature.put(PdfName.Type, PdfName.Sig);
-        signature.put(PdfName.Filter, PdfName.Adobe_PPKLite);
-        signature.put(PdfName.SubFilter, PdfName.Adbe_pkcs7_detached);
-        if (signDate != null) {
-            signature.put(PdfName.M, new PdfDate(signDate).getPdfObject());
-        }
-        if (signerName != null && !signerName.isBlank()) {
-            signature.put(PdfName.Name, new PdfString(signerName));
-        }
-        if (reason != null && !reason.isBlank()) {
-            signature.put(PdfName.Reason, new PdfString(reason));
-        }
-        if (location != null && !location.isBlank()) {
-            signature.put(PdfName.Location, new PdfString(location));
-        }
-        signature.put(PdfName.ContactInfo, new PdfString(DEFAULT_CONTACT));
-    }
-
-    private static KeyMaterial loadKeyMaterial(String pkcs12Path, char[] password) throws Exception {
-        Security.addProvider(new BouncyCastleProvider());
-        KeyStore ks = DemoKeystoreUtil.loadKeyStore(pkcs12Path, password);
-        KeyStore.PrivateKeyEntry entry = DemoKeystoreUtil.firstPrivateKey(ks, password);
+        KeyStore ks = DemoKeystoreUtil.loadKeyStore(effective, pwd);
+        KeyStore.PrivateKeyEntry entry = DemoKeystoreUtil.firstPrivateKey(ks, pwd);
         PrivateKey key = entry.getPrivateKey();
-        if (key == null) {
-            throw new IllegalStateException("Private key not found in keystore: " + pkcs12Path);
+        X509Certificate[] chain = Arrays.stream(entry.getCertificateChain())
+                .map(cert -> (X509Certificate) cert)
+                .toArray(X509Certificate[]::new);
+        if (Security.getProvider(BouncyCastleProvider.PROVIDER_NAME) == null) {
+            Security.addProvider(new BouncyCastleProvider());
         }
-        Certificate[] chain = entry.getCertificateChain();
-        X509Certificate cert = null;
-        if (chain != null && chain.length > 0) {
-            cert = (X509Certificate) chain[0];
-        }
-        return new KeyMaterial(key, chain, cert);
+        return new KeyMaterial(key, chain);
     }
 
     private static final class KeyMaterial {
         private final PrivateKey key;
-        private final Certificate[] chain;
-        private final X509Certificate certificate;
+        private final X509Certificate[] chain;
 
-        private KeyMaterial(PrivateKey key, Certificate[] chain, X509Certificate certificate) {
+        private KeyMaterial(PrivateKey key, X509Certificate[] chain) {
             this.key = key;
             this.chain = chain;
-            this.certificate = certificate;
         }
     }
 }

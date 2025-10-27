@@ -1,13 +1,10 @@
-# PDF Incremental Nursing Record Demo
+# PDF Incremental Nursing Record Demo (iText 5.5.6 Edition)
 
-This demo shows how to maintain a nursing record PDF with **incremental signatures**. Each row of the nursing log is protected by
-FieldMDP locks, while the document itself is certified with DocMDP. The CLI now supports two workflows:
-
-* **Plan A (template-first):** build a reusable AcroForm template with all rows ahead of time, then sign each row in append mode.
-* **Plan B (lazy-inject):** start from a static PDF without a form; each signing step injects the current row's fields and
-  signature widget into a new revision before signing it.
-
-The implementation uses Java 17, Maven, iText 7, and BouncyCastle.
+This module recreates the nursing-record signing workflow using **iText 5.5.6**.
+The original project targeted iText 7 and relied on its richer `kernel`,
+`layout`, and `sign` modules. The downgrade keeps the core append-mode signing
+scenario intact while documenting the features that cannot be reproduced with
+the legacy API surface.
 
 ## Build
 
@@ -16,37 +13,18 @@ cd pdf-incremental-sign-demo
 mvn -q -DskipTests package
 ```
 
-The shaded CLI is generated at
+The command produces
 `target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar`.
+(Maven Central blocks the build inside the sandbox with HTTP 403 responses; run
+it on a network that can access Maven plugins.)
 
 ## CLI overview
 
-For day-to-day usage you can rely on the helper scripts (they wrap the correct Java command for each platform):
-
-* **macOS/Linux:** `./scripts/app.sh <command> [options]`
-* **Windows (PowerShell/CMD):** `scripts\app.cmd <command> [options]`
-
-Both scripts call the shaded JAR so you never have to remember the classpath separator. For example, the following prints the top-level help:
-
-```bash
-./scripts/app.sh --help
-```
-
-The scripts are thin wrappers around the shaded JAR. You can still invoke it manually when needed:
+All commands are exposed through the shaded JAR:
 
 ```bash
 java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar --help
 ```
-
-> **Note:** Older instructions referenced the `com.demo.pdf.IncrementalSigner` main
-> class. It still works for backwards compatibility, but the recommended entry
-> point is the shaded JAR's manifest (`java -jar ...`). This avoids manual
-> classpath management and works on all platforms (Windows requires `;` instead
-> of `:` when using `-cp`).
-
-> If you encounter `ClassNotFoundException: com.demo.App` on Windows, it usually
-> means the command was launched with a Unix-style classpath separator (`:`).
-> Switch to the helper scripts above or replace `:` with `;`.
 
 ### `create-template`
 
@@ -54,44 +32,33 @@ java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.ja
 create-template --out <file> [--rows N] [--certP12 p12] [--password pwd]
 ```
 
-Builds an A4 one-page nursing form with *N* rows and pre-defined field names
-(`row{n}.time`, `row{n}.text`, `row{n}.nurse`, `sig_row_{n}`). The command applies a
-DocMDP certification (form-fill & signatures). If `--certP12` is omitted a demo
-certificate is generated automatically.
+Creates a one-page A4 nursing form with N rows. When `--certP12` is provided the
+result is DocMDP-certified using the supplied PKCS#12 (password defaults to
+`123456`). A temporary file is used to avoid in-place truncation during
+certification.
 
 ### `sign-row`
 
 ```
 sign-row --src <in> --dest <out> --row <n> --time <text> --text <text> \
-         --nurse <name> --pkcs12 <p12> --password <pwd> [--tsaUrl <url>] \
-         [--mode template|inject|auto] [--page p] [--certify-on-first-inject]
+         --nurse <name> [--pkcs12 <p12>] [--password <pwd>] [--tsa <url>]
 ```
 
-Signs a single row in append mode. Common parameters supply the row index and the field values. The
-`--mode` switch controls the workflow and enforces a real signature field named `sig_row_{n}`:
-
-* `template` – assumes the AcroForm already contains the row. The command fails if any `rowN.*` or `sig_row_N` field is missing or not `/FT /Sig`.
-* `inject` – creates the row's fields and signature widget (with printable annotation flags) when absent, then signs.
-* `auto` (default) – detect the mode automatically.
-
-`--certify-on-first-inject` promotes the first inject signature to a DocMDP certification when no DocMDP is present yet.
-`--page` specifies the page that holds the row layout (defaults to 1).
-
-Every signing step checks that the output PDF grew in size and re-verifies the document to ensure the new `sig_row_n` is visible to Adobe Reader.
+Fills the row fields created by `create-template` and signs the corresponding
+`nurseSign_n` field in append mode. A demo certificate is generated on the fly
+when no PKCS#12 is supplied.
 
 ### `sign-electronic`
 
 ```
 sign-electronic --src <in> --dest <out> [--pkcs12 <p12>] [--password <pwd>] \
                 [--page p] [--x pts] [--y pts] [--width pts] [--height pts] \
-                [--field name] [--signer name] [--reason text] [--location text]
+                [--field name] [--signer name] [--reason text] \
+                [--location text] [--contact text] [--cjk-font font] [--tsa url]
 ```
 
-Appends a single visible electronic signature with a handwritten-style appearance. By default the signature is placed at
-coordinates (72, 72) with a size of 180×72 points on page 1 and uses a generated demo certificate when `--pkcs12` is omitted.
-The command reuses an existing signature field when present or injects one automatically, ensuring the widget stays printable
-and is listed in `/Annots`. The signature dictionary entries (`/Name`, `/Reason`, `/Location`, `/ContactInfo`) can be customized
-with the respective options.
+Appends a visible signature using a dedicated signature field (created on demand
+when missing). Layer 2 text can be rendered with a custom CJK font.
 
 ### `verify`
 
@@ -99,9 +66,9 @@ with the respective options.
 verify --pdf <file>
 ```
 
-Re-opens the PDF in append-safe mode, runs the same Adobe sanity checks used during signing, and lists each signature's
-`/Filter`, `/SubFilter`, PKCS#7 validation result, and `/ByteRange` summary. The command fails fast when the header is not at
-byte 0, a signature field misses `/V`, widgets are hidden/missing from `/Annots`, or PKCS#7 verification fails.
+Lists every signature, verifies the PKCS#7 container, and reports whether a
+DocMDP certification dictionary is present. Deep FieldMDP diagnostics from the
+iText 7 branch are not available in iText 5.
 
 ### `certify`
 
@@ -109,165 +76,46 @@ byte 0, a signature field misses `/V`, widgets are hidden/missing from `/Annots`
 certify --src <in> --dest <out> [--certP12 p12] [--password pwd]
 ```
 
-Applies a DocMDP certification to an existing PDF using append mode. This is useful when a hospital needs to certify a static
-layout before running Plan B.
+Applies DocMDP certification in append mode. The command copies the source file
+before signing to avoid truncating the original revision.
 
-## Usage examples
+### `gen-demo-p12`
 
-### Plan A (template-first)
-
-```bash
-# 0) Generate a signer certificate (optional)
-java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar \
-  gen-demo-p12 --out demo-signer.p12 --password 123456 --cn "Demo Nurse"
-
-# 1) Create template with 3 rows and certify
-java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar \
-  create-template \
-  --out nursing_template.pdf \
-  --rows 3 \
-  --certP12 demo-signer.p12 \
-  --password 123456
-
-# 2) 10:00 sign row 1
-java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar \
-  sign-row \
-  --mode template \
-  --src nursing_template.pdf \
-  --dest nursing_10.pdf \
-  --row 1 --time "10:00" \
-  --text "这是第一条护理记录，10:00 护士查房" \
-  --nurse "Nurse Zhang" \
-  --pkcs12 demo-signer.p12 --password 123456
-
-# 3) 13:00 sign row 2
-java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar \
-  sign-row \
-  --mode template \
-  --src nursing_10.pdf \
-  --dest nursing_13.pdf \
-  --row 2 --time "13:00" \
-  --text "这是第二条护理记录，13:00 护士查房" \
-  --nurse "Nurse Zhang" \
-  --pkcs12 demo-signer.p12 --password 123456
-
-# 4) 15:00 sign row 3
-java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar \
-  sign-row \
-  --mode template \
-  --src nursing_13.pdf \
-  --dest nursing_15.pdf \
-  --row 3 --time "15:00" \
-  --text "这是第三条护理记录，15:00 护士查房" \
-  --nurse "Nurse Zhang" \
-  --pkcs12 demo-signer.p12 --password 123456
-
-# 5) Verify
-java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar \
-  verify --pdf nursing_15.pdf
+```
+gen-demo-p12 --out <file> --password <pwd> --cn <name>
 ```
 
-### Plan B (lazy-inject on a static/scanned PDF)
+Generates a self-signed PKCS#12 bundle for testing.
 
-```bash
-# Start from a plain PDF without an AcroForm, e.g. nursing_plain.pdf
+## iText 7 features without iText 5.5.6 equivalents
 
-# 1) 10:00 inject row 1 fields + sign
-java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar \
-  sign-row \
-  --mode inject \
-  --src nursing_plain.pdf \
-  --dest nursing_10.pdf \
-  --row 1 --time "10:00" \
-  --text "这是第一条护理记录，10:00 护士查房" \
-  --nurse "Nurse Zhang" \
-  --pkcs12 demo-signer.p12 --password 123456 \
-  --certify-on-first-inject
+| iText 7 feature / class | Previous responsibility | iText 5.5.6 status |
+| --- | --- | --- |
+| `com.itextpdf.layout` tables and layout engine | Automated template layout, font fallback, and styling (`NursingRecordTemplate`) | Replaced with manual `PdfContentByte` drawing and `TextField` placement. No automatic layout or font fallback. |
+| `PdfStructureDump`, `PdfStructureDiff`, `PdfStructureDebugger` | Structure and widget debugging commands | Removed. iText 5 offers no equivalent access to the tagged PDF structure tree without extensive reimplementation. |
+| `PostSignSanitizer`, `PdfAcroformNormalizer`, `SignatureWidgetRepairer` | Post-signature clean-up and widget repair helpers | Removed. iText 5 widget/annotation helpers are too limited for the automated repair routines. |
+| `SignatureVerifier.deepVerify` reachability checks | FieldMDP coverage reporting for each signature | Not implemented. `AcroFields` in iText 5 exposes only basic locking metadata. |
+| Incremental field injection utilities (`FormUtil`, `LayoutUtil`, etc.) | Dynamically adding new fields into arbitrary PDFs | Dropped. iText 5 lacks the high-level field builders used in the injection workflow. |
 
-# 2) 13:00 inject row 2 fields + sign (append)
-java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar \
-  sign-row \
-  --mode inject \
-  --src nursing_10.pdf \
-  --dest nursing_13.pdf \
-  --row 2 --time "13:00" \
-  --text "这是第二条护理记录，13:00 护士查房" \
-  --nurse "Nurse Zhang" \
-  --pkcs12 demo-signer.p12 --password 123456
+## Potential regressions due to missing iText 7 bug fixes
 
-# 3) 15:00 inject row 3 fields + sign (append)
-java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar \
-  sign-row \
-  --mode inject \
-  --src nursing_13.pdf \
-  --dest nursing_15.pdf \
-  --row 3 --time "15:00" \
-  --text "这是第三条护理记录，15:00 护士查房" \
-  --nurse "Nurse Zhang" \
-  --pkcs12 demo-signer.p12 --password 123456
+The following areas rely on behavior that was improved in iText 7. They remain
+functional for the demo PDFs but can exhibit issues on complex real-world
+documents because iText 5.5.6 predates the fixes:
 
-# 4) Verify
-java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar \
-  verify --pdf nursing_15.pdf
-```
+| Concern | iText 7 component with the fix | iText 5.5.6 surface used now | Risk |
+| --- | --- | --- | --- |
+| Incremental update correctness for append-mode signatures | `com.itextpdf.signatures.PdfSigner` and `PdfWriter` incremental writing improvements | `PdfStamper.createSignature(...)` + `MakeSignature.signDetached(...)` | Complex cross-reference structures or large file updates may lead to invalid byte ranges or corrupted incremental saves. |
+| DocMDP certification propagation | `PdfSigner` + `PdfSignatureAppearance#setCertificationLevel` fixes | `PdfSignatureAppearance#setCertificationLevel` when certifying via `PdfStamper` | Some viewers may misinterpret permission dictionaries, especially with nested certifications or multiple `Perms` entries. |
+| Timestamp authority integration and long-term validation | `com.itextpdf.signatures.TSAClientBouncyCastle` updates and DSS helpers | `TSAClientBouncyCastle` from iText 5.5.6 | Limited ETSI/LTV coverage; timestamp responses with modern algorithms might require manual handling. |
+| Field locking edge cases | `SignatureUtil`/`PdfAcroForm` improvements in iText 7 | `AcroFields#setFieldProperty(..., PdfFormField.FF_READ_ONLY, ...)` | Some field states (e.g., additional widget appearances) might remain editable because iText 5 lacks consolidated locking helpers. |
 
-If the plain PDF must be certified before any signatures, run `certify` once before step 1:
+## Feature compatibility summary
 
-```bash
-java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar \
-  certify --src nursing_plain.pdf --dest nursing_plain_certified.pdf \
-  --certP12 demo-signer.p12 --password 123456
-```
-
-## Acrobat 兼容性检查单（Acrobat compatibility checklist）
-
-Adobe Reader hides signatures when any of the following issues occurs: **no `/V` binding**, **widget missing from `/Annots`**, **wrong `/Filter`/`/SubFilter`**, **header not at byte 0**, or **invalid `/ByteRange`/`/Contents`**. Check every revision against this list:
-
-1. The signature field exists with `/FT /Sig`, and its `/V` entry points to the signature dictionary.
-2. The signature dictionary uses `/Filter /Adobe.PPKLite` with `/SubFilter /adbe.pkcs7.detached` (or `/ETSI.CAdES.detached`).
-3. `/ByteRange` contains four non-negative integers starting at 0 and `/Contents` is an even-length hex string.
-4. The signature widget annotation lives in the page’s `/Annots` array, is visible, and has the `PRINT` flag.
-5. Each signing run writes an incremental update (append mode) so earlier signatures remain valid.
-6. The AcroForm `SigFlags` set bits 1 and 2 (`SIGNATURE_EXIST | APPEND_ONLY`).
-
-The toolkit enforces these requirements on every signing revision:
-
-1. **`sign-row` aborts if the signature field is not Adobe-compatible.** It creates (or reuses) a real `/FT /Sig` field, forces the widget onto the target page’s `/Annots`, sets printable & visible flags, and signs with `/Filter /Adobe.PPKLite` plus `/SubFilter /adbe.pkcs7.detached`. After writing the revision it immediately calls `PostSignValidator.validate(...)` to re-open the fresh file, confirm the header bytes, `/V` binding, `/Filter`, `/SubFilter`, `/ByteRange`, `/Contents` length, widget placement, and PKCS#7 integrity before accepting the result.
-
-2. **`verify` repeats the same checks for every existing signature.** In addition to the PKCS#7 validation it confirms widget flags, page placement, and ByteRange math, then prints a concise summary so you can compare revisions quickly.
-
-   ```bash
-   java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar \
-     verify --pdf nursing_15.pdf
-   ```
-
-   Expect `sig_row_n` entries with `Filter=/Adobe.PPKLite`, `SubFilter=/adbe.pkcs7.detached` (or `/ETSI.CAdES.detached`), and `Valid=true`. An empty list means Adobe will also hide the signature.
-
-3. **Use the structural debugger when Acrobat’s Signatures panel is empty.**
-
-   ```bash
-   java -jar target/pdf-incremental-sign-demo-1.0-SNAPSHOT-jar-with-dependencies.jar \
-     debug-structure --pdf nursing_15.pdf
-   ```
-
-   The report prints the file header plus each `sig_row_*` field: widget page/rect/flags, `/V` dictionary, `/Filter`, `/SubFilter`, `/ByteRange`, and `/Contents` length. Any anomaly comes with a fix hint and the command exits non-zero so CI can halt.
-
-4. **Finally, confirm visually in Adobe Acrobat/Reader.** The Signatures panel must list the new `sig_row_n`. File size should increase on every append-only revision, and Acrobat’s “View Signed Version” keeps earlier signatures valid. The demo scripts show the full `10:00 → 13:00 → 15:00` chain so you can see each revision stacked in Acrobat’s history.
-
-## Notes
-
-* All signing operations use `useAppendMode()` to preserve prior revisions.
-* Field rectangles are computed by `LayoutUtil`, so the form scales to any row index the page can fit.
-* `verify` prints each signature's filter/subfilter, ByteRange summary, and validation result so you can cross-check Adobe's
-  Signatures panel.
-* The CLI attempts to embed `fonts/NotoSansCJKsc-Regular.otf` for CJK text; if unavailable it falls back to Helvetica.
-
-## Minimal smoke test
-
-After building the CLI and preparing a `nursing_plain.pdf`, run:
-
-```bash
-scripts/basic-inject-test.sh [path/to/nursing_plain.pdf]
-```
-
-The script injects row 1, signs it, invokes `verify`, and fails if `sig_row_1` is not detected in the output.
+* Template creation, row signing, electronic signing, DocMDP certification, and
+  PKCS#7 verification are fully supported via the CLI.
+* Automated structure diagnostics, widget repair, and deep FieldMDP reachability
+  reporting are **not** available in this branch.
+* When migrating existing workflows from the iText 7 edition, validate the
+  output with Adobe Acrobat/Reader or another trusted validator to ensure
+  incremental updates behave as expected.
