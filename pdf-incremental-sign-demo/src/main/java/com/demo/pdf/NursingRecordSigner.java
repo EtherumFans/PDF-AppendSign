@@ -205,8 +205,8 @@ public final class NursingRecordSigner {
                 BaseFont baseFont = resolveBaseFont();
                 System.out.println("[sign-row] Using font for text fields: " + baseFont.getPostscriptFontName());
 
-                AcroFields fields = stamper.getAcroFields();
-                fields.setGenerateAppearances(true);
+                AcroFields initialFields = stamper.getAcroFields();
+                initialFields.setGenerateAppearances(true);
 
                 Rectangle timeRect = rectForTime(names.row());
                 Rectangle textRect = rectForText(names.row());
@@ -218,29 +218,46 @@ public final class NursingRecordSigner {
                 validateRectangle(nurseRect, pageRect, names.nurseField());
                 validateRectangle(sigRect, pageRect, names.signatureField());
 
-                ensureTextField_iText5(stamper, fields, names.timeField(), timeRect, baseFont, false);
-                fields = stamper.getAcroFields();
-                ensureTextField_iText5(stamper, fields, names.textField(), textRect, baseFont, true);
-                fields = stamper.getAcroFields();
-                ensureTextField_iText5(stamper, fields, names.nurseField(), nurseRect, baseFont, false);
-                fields = stamper.getAcroFields();
-                ensureSignatureField_iText5(stamper, fields, names.signatureField(), sigRect);
-                fields = stamper.getAcroFields();
+                if (initialFields.getFieldItem(names.timeField()) == null) {
+                    addTextFieldAndValue(stamper, TARGET_PAGE, timeRect, names.timeField(), timeValue, baseFont, false);
+                } else {
+                    requireSetField(initialFields, initialFields.setField(names.timeField(), timeValue),
+                            names.timeField(), names.row(), pageRect, timeRect);
+                }
 
-                setFontProperties(fields, names.timeField(), baseFont);
-                setFontProperties(fields, names.textField(), baseFont);
-                setFontProperties(fields, names.nurseField(), baseFont);
+                AcroFields fieldsAfterTime = stamper.getAcroFields();
 
-                requireSetField(fields, fields.setField(names.timeField(), timeValue),
-                        names.timeField(), names.row(), pageRect, timeRect);
-                requireSetField(fields, fields.setField(names.textField(), textValue),
-                        names.textField(), names.row(), pageRect, textRect);
-                requireSetField(fields, fields.setField(names.nurseField(), nurseValue),
-                        names.nurseField(), names.row(), pageRect, nurseRect);
+                if (fieldsAfterTime.getFieldItem(names.textField()) == null) {
+                    addTextFieldAndValue(stamper, TARGET_PAGE, textRect, names.textField(), textValue, baseFont, true);
+                } else {
+                    requireSetField(fieldsAfterTime, fieldsAfterTime.setField(names.textField(), textValue),
+                            names.textField(), names.row(), pageRect, textRect);
+                }
 
-                fields.regenerateField(names.timeField());
-                fields.regenerateField(names.textField());
-                fields.regenerateField(names.nurseField());
+                AcroFields fieldsAfterText = stamper.getAcroFields();
+
+                if (fieldsAfterText.getFieldItem(names.nurseField()) == null) {
+                    addTextFieldAndValue(stamper, TARGET_PAGE, nurseRect, names.nurseField(), nurseValue, baseFont, false);
+                } else {
+                    requireSetField(fieldsAfterText, fieldsAfterText.setField(names.nurseField(), nurseValue),
+                            names.nurseField(), names.row(), pageRect, nurseRect);
+                }
+
+                AcroFields fieldsAfterTextInjection = stamper.getAcroFields();
+                if (fieldsAfterTextInjection.getFieldItem(names.signatureField()) == null) {
+                    addSignatureField(stamper, TARGET_PAGE, sigRect, names.signatureField());
+                }
+
+                AcroFields refreshed = stamper.getAcroFields();
+                refreshed.setGenerateAppearances(true);
+
+                setFontProperties(refreshed, names.timeField(), baseFont);
+                setFontProperties(refreshed, names.textField(), baseFont);
+                setFontProperties(refreshed, names.nurseField(), baseFont);
+
+                refreshed.regenerateField(names.timeField());
+                refreshed.regenerateField(names.textField());
+                refreshed.regenerateField(names.nurseField());
             } finally {
                 stamper.close();
             }
@@ -297,42 +314,38 @@ public final class NursingRecordSigner {
         acro.remove(PdfName.NEEDAPPEARANCES);
     }
 
-    private static PdfFormField ensureTextField_iText5(PdfStamper stamper,
-                                                       AcroFields fields,
-                                                       String fieldName,
-                                                       Rectangle rect,
-                                                       BaseFont baseFont,
-                                                       boolean multiline) throws Exception {
-        if (fields.getFieldItem(fieldName) != null) {
-            return null;
-        }
-        TextField tf = new TextField(stamper.getWriter(), rect, fieldName);
+    private static void addTextFieldAndValue(PdfStamper stamper,
+                                             int pageNo,
+                                             Rectangle rect,
+                                             String name,
+                                             String value,
+                                             BaseFont baseFont,
+                                             boolean multiline) throws Exception {
+        TextField tf = new TextField(stamper.getWriter(), rect, name);
+        tf.setFont(baseFont);
+        tf.setFontSize(12f);
+        int options = TextField.READ_ONLY;
         if (multiline) {
-            tf.setOptions(TextField.MULTILINE);
+            options |= TextField.MULTILINE;
         }
-        PdfFormField textField = tf.getTextField();
-        stamper.addAnnotation(textField, TARGET_PAGE);
-        System.out.println("[sign-row] Injected text field '" + fieldName + "' at " + describeRect(rect));
-        AcroFields refreshed = stamper.getAcroFields();
-        refreshed.setFieldProperty(fieldName, "textfont", baseFont, null);
-        refreshed.setFieldProperty(fieldName, "textsize", Float.valueOf(12f), null);
-        return textField;
+        tf.setOptions(options);
+        PdfFormField field = tf.getTextField();
+        field.setFlags(PdfAnnotation.FLAGS_PRINT);
+        field.setValueAsString(value);
+        stamper.addAnnotation(field, pageNo);
+        System.out.println("[sign-row] Injected text field '" + name + "' at " + describeRect(rect));
     }
 
-    private static PdfFormField ensureSignatureField_iText5(PdfStamper stamper,
-                                                            AcroFields fields,
-                                                            String sigName,
-                                                            Rectangle rect) throws Exception {
-        if (fields.getFieldItem(sigName) != null) {
-            return null;
-        }
+    private static void addSignatureField(PdfStamper stamper,
+                                          int pageNo,
+                                          Rectangle rect,
+                                          String name) {
         PdfFormField signature = PdfFormField.createSignature(stamper.getWriter());
-        signature.setWidget(rect, PdfAnnotation.HIGHLIGHT_INVERT);
-        signature.setFieldName(sigName);
+        signature.setFieldName(name);
+        signature.setWidget(rect, null);
         signature.setFlags(PdfAnnotation.FLAGS_PRINT);
-        stamper.addAnnotation(signature, TARGET_PAGE);
-        System.out.println("[sign-row] Injected signature field '" + sigName + "' at " + describeRect(rect));
-        return signature;
+        stamper.addAnnotation(signature, pageNo);
+        System.out.println("[sign-row] Injected signature field '" + name + "' at " + describeRect(rect));
     }
 
     private static String safe(String value) {
