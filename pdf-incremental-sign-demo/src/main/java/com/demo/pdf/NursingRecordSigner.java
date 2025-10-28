@@ -390,7 +390,11 @@ public final class NursingRecordSigner {
         TextField tf = new TextField(stamper.getWriter(), rect, name);
         tf.setFont(baseFont);
         tf.setFontSize(size);
-        tf.setOptions(TextField.READ_ONLY);
+        // Do not mark the field read-only here. iText refuses to set the value of
+        // read-only fields programmatically, which results in "Unable to set field"
+        // errors when the document is filled. We flatten the fields immediately
+        // after populating them, so leaving the field editable at creation time does
+        // not affect the final PDF but allows the values to be written reliably.
         tf.setAlignment(align);
         PdfFormField field = tf.getTextField();
         field.setFlags(PdfAnnotation.FLAGS_PRINT);
