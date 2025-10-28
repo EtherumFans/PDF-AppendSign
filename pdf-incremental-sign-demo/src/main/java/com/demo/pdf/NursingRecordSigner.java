@@ -551,19 +551,19 @@ public final class NursingRecordSigner {
         }
 
         static String timeName(int row) {
-            return "row" + row + ".time";
+            return "recordTime_" + row;
         }
 
         static String textName(int row) {
-            return "row" + row + ".text";
+            return "recordContent_" + row;
         }
 
         static String nurseName(int row) {
-            return "row" + row + ".nurse";
+            return "nurseName_" + row;
         }
 
         static String signatureName(int row) {
-            return "sig_row_" + row;
+            return "nurseSign_" + row;
         }
 
         int row() {
