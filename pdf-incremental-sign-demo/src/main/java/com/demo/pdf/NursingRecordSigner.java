@@ -12,6 +12,7 @@ import com.itextpdf.text.pdf.PdfReader;
 import com.itextpdf.text.pdf.PdfSignatureAppearance;
 import com.itextpdf.text.pdf.PdfStamper;
 import com.itextpdf.text.pdf.TextField;
+import com.itextpdf.text.pdf.PdfString;
 import com.itextpdf.text.pdf.security.BouncyCastleDigest;
 import com.itextpdf.text.pdf.security.ExternalDigest;
 import com.itextpdf.text.pdf.security.ExternalSignature;
@@ -197,7 +198,8 @@ public final class NursingRecordSigner {
         try {
             PdfStamper stamper = new PdfStamper(readerPhaseOne, buffer, '\0', true);
             try {
-                ensureAcroFormDict(stamper, readerPhaseOne);
+                ensureAcroFormOnReaderCatalog(readerPhaseOne);
+                stamper.markUsed(readerPhaseOne.getCatalog());
 
                 Rectangle pageRect = requirePageRectangle(readerPhaseOne, TARGET_PAGE);
                 BaseFont baseFont = resolveBaseFont();
@@ -284,14 +286,13 @@ public final class NursingRecordSigner {
         }
     }
 
-    private static void ensureAcroFormDict(PdfStamper stamper, PdfReader reader) {
+    private static void ensureAcroFormOnReaderCatalog(PdfReader reader) {
         PdfDictionary catalog = reader.getCatalog();
         PdfDictionary acro = catalog.getAsDict(PdfName.ACROFORM);
         if (acro == null) {
             acro = new PdfDictionary();
-            stamper.getWriter().getExtraCatalog().put(PdfName.ACROFORM, acro);
-        } else {
-            stamper.markUsed(acro);
+            acro.put(PdfName.DA, new PdfString("/Helv 12 Tf 0 g"));
+            catalog.put(PdfName.ACROFORM, acro);
         }
         acro.remove(PdfName.NEEDAPPEARANCES);
     }
