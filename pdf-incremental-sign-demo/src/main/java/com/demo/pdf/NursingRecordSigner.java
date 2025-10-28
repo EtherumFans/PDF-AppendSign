@@ -1,30 +1,27 @@
 package com.demo.pdf;
 
 import com.demo.crypto.DemoKeystoreUtil;
-import com.itextpdf.text.DocumentException;
 import com.itextpdf.text.Rectangle;
 import com.itextpdf.text.pdf.AcroFields;
-import com.itextpdf.text.pdf.AcroFields.FieldPosition;
+import com.itextpdf.text.pdf.BaseFont;
 import com.itextpdf.text.pdf.PdfAnnotation;
-import com.itextpdf.text.pdf.PdfArray;
 import com.itextpdf.text.pdf.PdfDictionary;
 import com.itextpdf.text.pdf.PdfFormField;
 import com.itextpdf.text.pdf.PdfName;
-import com.itextpdf.text.pdf.PdfIndirectObject;
 import com.itextpdf.text.pdf.PdfReader;
+import com.itextpdf.text.pdf.PdfSignatureAppearance;
 import com.itextpdf.text.pdf.PdfStamper;
-import com.itextpdf.text.pdf.PdfString;
+import com.itextpdf.text.pdf.TextField;
 import com.itextpdf.text.pdf.security.BouncyCastleDigest;
 import com.itextpdf.text.pdf.security.ExternalDigest;
 import com.itextpdf.text.pdf.security.ExternalSignature;
 import com.itextpdf.text.pdf.security.MakeSignature;
 import com.itextpdf.text.pdf.security.PrivateKeySignature;
 import com.itextpdf.text.pdf.security.TSAClient;
-import com.itextpdf.text.pdf.PdfSignatureAppearance;
 import com.itextpdf.text.pdf.security.TSAClientBouncyCastle;
-import com.itextpdf.text.pdf.TextField;
-import com.itextpdf.text.pdf.BaseFont;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -33,7 +30,6 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.cert.Certificate;
 import java.util.Calendar;
-import java.util.List;
 import java.util.Objects;
 
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
@@ -190,122 +186,156 @@ public final class NursingRecordSigner {
         DemoKeystoreUtil.ensureProvider();
 
         SigningSupport.SigningContext ctx = SigningSupport.resolve(params.getPkcs12Path(), params.getPassword());
+        RowFieldNames names = RowFieldNames.forRow(params.getRow());
+        String timeValue = safe(params.getTimeValue());
+        String textValue = safe(params.getTextValue());
+        String nurseValue = safe(params.getNurse());
 
-        PdfReader reader = new PdfReader(params.getSource());
-        try (FileOutputStream os = new FileOutputStream(params.getDestination())) {
-            PdfStamper stamper = PdfStamper.createSignature(reader, os, '\0', null, true);
-            boolean signatureApplied = false;
+        byte[] phaseOneBytes;
+        PdfReader readerPhaseOne = new PdfReader(params.getSource());
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        try {
+            PdfStamper stamper = new PdfStamper(readerPhaseOne, buffer, '\0', true);
             try {
-                prepareAcroForm(reader, stamper);
-                Rectangle pageRect = requirePageRectangle(reader, TARGET_PAGE);
+                ensureAcroFormDict(stamper, readerPhaseOne);
+
+                Rectangle pageRect = requirePageRectangle(readerPhaseOne, TARGET_PAGE);
                 BaseFont baseFont = resolveBaseFont();
                 System.out.println("[sign-row] Using font for text fields: " + baseFont.getPostscriptFontName());
 
                 AcroFields fields = stamper.getAcroFields();
                 fields.setGenerateAppearances(true);
 
-                RowFieldNames names = RowFieldNames.forRow(params.getRow());
-                populateRow(fields, stamper, names, pageRect, baseFont,
-                        safe(params.getTimeValue()), safe(params.getTextValue()), safe(params.getNurse()));
+                Rectangle timeRect = rectForTime(names.row());
+                Rectangle textRect = rectForText(names.row());
+                Rectangle nurseRect = rectForNurse(names.row());
+                Rectangle sigRect = rectForSignature(names.row());
 
+                validateRectangle(timeRect, pageRect, names.timeField());
+                validateRectangle(textRect, pageRect, names.textField());
+                validateRectangle(nurseRect, pageRect, names.nurseField());
+                validateRectangle(sigRect, pageRect, names.signatureField());
+
+                ensureTextField_iText5(stamper, fields, names.timeField(), timeRect, baseFont, false);
                 fields = stamper.getAcroFields();
-                FieldPosition sigPosition = locateSignaturePosition(fields, names.signatureField());
-                Rectangle signatureRect = new Rectangle(sigPosition.position);
-                System.out.println("[sign-row] Signing field '" + names.signatureField() + "' on page "
-                        + sigPosition.page + " at " + describeRect(signatureRect));
+                ensureTextField_iText5(stamper, fields, names.textField(), textRect, baseFont, true);
+                fields = stamper.getAcroFields();
+                ensureTextField_iText5(stamper, fields, names.nurseField(), nurseRect, baseFont, false);
+                fields = stamper.getAcroFields();
+                ensureSignatureField_iText5(stamper, fields, names.signatureField(), sigRect);
+                fields = stamper.getAcroFields();
 
-                PdfSignatureAppearance appearance = stamper.getSignatureAppearance();
-                appearance.setCertificationLevel(PdfSignatureAppearance.NOT_CERTIFIED);
-                appearance.setRenderingMode(PdfSignatureAppearance.RenderingMode.NAME_AND_DESCRIPTION);
-                appearance.setReason(params.getReason());
-                appearance.setLocation(params.getLocation());
-                appearance.setContact(params.getContact());
-                appearance.setSignDate(Calendar.getInstance());
-                appearance.setVisibleSignature(signatureRect, sigPosition.page, names.signatureField());
-                String layer2Text = String.format("%s\n%s\n%s",
-                        safe(params.getNurse()),
-                        safe(params.getTimeValue()),
-                        safe(params.getTextValue()));
-                appearance.setLayer2Text(layer2Text);
+                setFontProperties(fields, names.timeField(), baseFont);
+                setFontProperties(fields, names.textField(), baseFont);
+                setFontProperties(fields, names.nurseField(), baseFont);
 
-                ExternalDigest digest = new BouncyCastleDigest();
-                ExternalSignature signature = new PrivateKeySignature(ctx.privateKey(), "SHA256", BouncyCastleProvider.PROVIDER_NAME);
-                Certificate[] chain = ctx.chain();
+                requireSetField(fields, fields.setField(names.timeField(), timeValue),
+                        names.timeField(), names.row(), pageRect, timeRect);
+                requireSetField(fields, fields.setField(names.textField(), textValue),
+                        names.textField(), names.row(), pageRect, textRect);
+                requireSetField(fields, fields.setField(names.nurseField(), nurseValue),
+                        names.nurseField(), names.row(), pageRect, nurseRect);
 
-                TSAClient tsaClient = null;
-                if (params.getTsaUrl() != null && !params.getTsaUrl().isBlank()) {
-                    tsaClient = new TSAClientBouncyCastle(params.getTsaUrl());
-                }
-
-                MakeSignature.signDetached(appearance, digest, signature, chain, null, null, tsaClient, 0, MakeSignature.CryptoStandard.CMS);
-                signatureApplied = true;
+                fields.regenerateField(names.timeField());
+                fields.regenerateField(names.textField());
+                fields.regenerateField(names.nurseField());
             } finally {
-                closeStamper(stamper, signatureApplied);
+                stamper.close();
             }
         } finally {
-            reader.close();
+            readerPhaseOne.close();
+        }
+        phaseOneBytes = buffer.toByteArray();
+
+        PdfReader readerPhaseTwo = new PdfReader(new ByteArrayInputStream(phaseOneBytes));
+        try (FileOutputStream os = new FileOutputStream(params.getDestination())) {
+            PdfStamper stamper = PdfStamper.createSignature(readerPhaseTwo, os, '\0', null, true);
+
+            AcroFields fields = stamper.getAcroFields();
+            if (fields.getFieldItem(names.signatureField()) == null) {
+                throw new IllegalStateException("Signature field not found in P2: " + names.signatureField());
+            }
+
+            PdfSignatureAppearance appearance = stamper.getSignatureAppearance();
+            appearance.setCertificationLevel(PdfSignatureAppearance.NOT_CERTIFIED);
+            appearance.setRenderingMode(PdfSignatureAppearance.RenderingMode.NAME_AND_DESCRIPTION);
+            appearance.setReason(params.getReason());
+            appearance.setLocation(params.getLocation());
+            appearance.setContact(params.getContact());
+            appearance.setSignDate(Calendar.getInstance());
+            appearance.setVisibleSignature(names.signatureField());
+            String layer2Text = String.format("%s\n%s\n%s", nurseValue, timeValue, textValue);
+            appearance.setLayer2Text(layer2Text);
+
+            ExternalDigest digest = new BouncyCastleDigest();
+            ExternalSignature signature =
+                    new PrivateKeySignature(ctx.privateKey(), "SHA256", BouncyCastleProvider.PROVIDER_NAME);
+            Certificate[] chain = ctx.chain();
+
+            TSAClient tsaClient = null;
+            if (params.getTsaUrl() != null && !params.getTsaUrl().isBlank()) {
+                tsaClient = new TSAClientBouncyCastle(params.getTsaUrl());
+            }
+
+            MakeSignature.signDetached(appearance, digest, signature, chain, null, null, tsaClient, 0,
+                    MakeSignature.CryptoStandard.CMS);
+        } finally {
+            readerPhaseTwo.close();
         }
     }
 
-    private static void closeStamper(PdfStamper stamper, boolean signatureApplied)
-            throws DocumentException, IOException {
-        try {
-            stamper.close();
-        } catch (DocumentException e) {
-            if (signatureApplied) {
-                throw e;
-            }
-            System.err.println("[sign-row] Unable to close stamper cleanly: " + e.getMessage());
-        } catch (IOException e) {
-            if (signatureApplied) {
-                throw e;
-            }
-            System.err.println("[sign-row] I/O error while closing stamper: " + e.getMessage());
+    private static void ensureAcroFormDict(PdfStamper stamper, PdfReader reader) {
+        PdfDictionary catalog = reader.getCatalog();
+        PdfDictionary acro = catalog.getAsDict(PdfName.ACROFORM);
+        if (acro == null) {
+            acro = new PdfDictionary();
+            stamper.getWriter().getExtraCatalog().put(PdfName.ACROFORM, acro);
+        } else {
+            stamper.markUsed(acro);
         }
+        acro.remove(PdfName.NEEDAPPEARANCES);
+    }
+
+    private static PdfFormField ensureTextField_iText5(PdfStamper stamper,
+                                                       AcroFields fields,
+                                                       String fieldName,
+                                                       Rectangle rect,
+                                                       BaseFont baseFont,
+                                                       boolean multiline) throws Exception {
+        if (fields.getFieldItem(fieldName) != null) {
+            return null;
+        }
+        TextField tf = new TextField(stamper.getWriter(), rect, fieldName);
+        if (multiline) {
+            tf.setOptions(TextField.MULTILINE);
+        }
+        PdfFormField textField = tf.getTextField();
+        stamper.addAnnotation(textField, TARGET_PAGE);
+        System.out.println("[sign-row] Injected text field '" + fieldName + "' at " + describeRect(rect));
+        AcroFields refreshed = stamper.getAcroFields();
+        refreshed.setFieldProperty(fieldName, "textfont", baseFont, null);
+        refreshed.setFieldProperty(fieldName, "textsize", Float.valueOf(12f), null);
+        return textField;
+    }
+
+    private static PdfFormField ensureSignatureField_iText5(PdfStamper stamper,
+                                                            AcroFields fields,
+                                                            String sigName,
+                                                            Rectangle rect) throws Exception {
+        if (fields.getFieldItem(sigName) != null) {
+            return null;
+        }
+        PdfFormField signature = PdfFormField.createSignature(stamper.getWriter());
+        signature.setWidget(rect, PdfAnnotation.HIGHLIGHT_INVERT);
+        signature.setFieldName(sigName);
+        signature.setFlags(PdfAnnotation.FLAGS_PRINT);
+        stamper.addAnnotation(signature, TARGET_PAGE);
+        System.out.println("[sign-row] Injected signature field '" + sigName + "' at " + describeRect(rect));
+        return signature;
     }
 
     private static String safe(String value) {
         return value == null ? "" : value.stripTrailing();
-    }
-
-    private static void populateRow(AcroFields fields,
-                                    PdfStamper stamper,
-                                    RowFieldNames names,
-                                    Rectangle pageRect,
-                                    BaseFont baseFont,
-                                    String time,
-                                    String text,
-                                    String nurse) throws Exception {
-        Rectangle timeRect = rectForTime(names.row());
-        Rectangle textRect = rectForText(names.row());
-        Rectangle nurseRect = rectForNurse(names.row());
-        Rectangle sigRect = rectForSignature(names.row());
-
-        validateRectangle(timeRect, pageRect, names.timeField());
-        validateRectangle(textRect, pageRect, names.textField());
-        validateRectangle(nurseRect, pageRect, names.nurseField());
-        validateRectangle(sigRect, pageRect, names.signatureField());
-
-        ensureTextField(fields, stamper, names.timeField(), timeRect, pageRect, baseFont, false);
-        fields = stamper.getAcroFields();
-        ensureTextField(fields, stamper, names.textField(), textRect, pageRect, baseFont, true);
-        fields = stamper.getAcroFields();
-        ensureTextField(fields, stamper, names.nurseField(), nurseRect, pageRect, baseFont, false);
-        fields = stamper.getAcroFields();
-        ensureSignatureField(fields, stamper, names.signatureField(), sigRect, pageRect);
-        fields = stamper.getAcroFields();
-
-        setFontProperties(fields, names.timeField(), baseFont);
-        setFontProperties(fields, names.textField(), baseFont);
-        setFontProperties(fields, names.nurseField(), baseFont);
-
-        requireSetField(fields, fields.setField(names.timeField(), time), names.timeField(), names.row(), pageRect, timeRect);
-        requireSetField(fields, fields.setField(names.textField(), text), names.textField(), names.row(), pageRect, textRect);
-        requireSetField(fields, fields.setField(names.nurseField(), nurse), names.nurseField(), names.row(), pageRect, nurseRect);
-
-        fields.regenerateField(names.timeField());
-        fields.regenerateField(names.textField());
-        fields.regenerateField(names.nurseField());
     }
 
     private static void requireSetField(AcroFields fields,
@@ -329,101 +359,6 @@ public final class NursingRecordSigner {
         fields.setFieldProperty(name, "textsize", Float.valueOf(12f), null);
     }
 
-    private static void ensureTextField(AcroFields fields,
-                                        PdfStamper stamper,
-                                        String fieldName,
-                                        Rectangle rect,
-                                        Rectangle pageRect,
-                                        BaseFont baseFont,
-                                        boolean multiline) throws Exception {
-        if (fields.getFieldItem(fieldName) != null) {
-            return;
-        }
-        validateRectangle(rect, pageRect, fieldName);
-        TextField tf = new TextField(stamper.getWriter(), rect, fieldName);
-        if (multiline) {
-            tf.setOptions(TextField.MULTILINE);
-        }
-        PdfFormField textField = tf.getTextField();
-        stamper.addAnnotation(textField, TARGET_PAGE);
-        System.out.println("[sign-row] Injected text field '" + fieldName + "' at " + describeRect(rect));
-        AcroFields refreshed = stamper.getAcroFields();
-        refreshed.setFieldProperty(fieldName, "textfont", baseFont, null);
-        refreshed.setFieldProperty(fieldName, "textsize", Float.valueOf(12f), null);
-    }
-
-    private static void ensureSignatureField(AcroFields fields,
-                                             PdfStamper stamper,
-                                             String sigName,
-                                             Rectangle rect,
-                                             Rectangle pageRect) throws Exception {
-        if (fields.getFieldItem(sigName) != null) {
-            return;
-        }
-        validateRectangle(rect, pageRect, sigName);
-        PdfFormField signature = PdfFormField.createSignature(stamper.getWriter());
-        signature.setWidget(rect, PdfAnnotation.HIGHLIGHT_INVERT);
-        signature.setFieldName(sigName);
-        signature.setFlags(PdfAnnotation.FLAGS_PRINT);
-        stamper.addAnnotation(signature, TARGET_PAGE);
-        System.out.println("[sign-row] Injected signature field '" + sigName + "' at " + describeRect(rect));
-    }
-
-    private static FieldPosition locateSignaturePosition(AcroFields fields, String sigName) {
-        List<FieldPosition> positions = fields.getFieldPositions(sigName);
-        if (positions == null || positions.isEmpty()) {
-            boolean present = fields.getFieldItem(sigName) != null;
-            System.err.println("[sign-row] Signature field diagnostics for '" + sigName + "': present=" + present
-                    + ", positions=" + (positions == null ? 0 : positions.size()));
-            throw new IllegalStateException("Signature field has no widget position: " + sigName);
-        }
-        FieldPosition pos = positions.get(0);
-        if (pos.page <= 0) {
-            throw new IllegalStateException("Signature field " + sigName + " is not assigned to a page");
-        }
-        if (pos.position == null) {
-            throw new IllegalStateException("Signature field " + sigName + " has null rectangle");
-        }
-        return pos;
-    }
-
-    private static void prepareAcroForm(PdfReader reader, PdfStamper stamper) throws IOException {
-        PdfDictionary catalog = reader.getCatalog();
-        PdfDictionary acro = catalog.getAsDict(PdfName.ACROFORM);
-        if (acro == null) {
-            acro = new PdfDictionary();
-            acro.put(PdfName.FIELDS, new PdfArray());
-            PdfIndirectObject ref = stamper.getWriter().addToBody(acro);
-            catalog.put(PdfName.ACROFORM, ref.getIndirectReference());
-            stamper.markUsed(catalog);
-            stamper.markUsed(acro);
-            return;
-        }
-
-        PdfArray fields = acro.getAsArray(PdfName.FIELDS);
-        if (fields == null) {
-            acro.put(PdfName.FIELDS, new PdfArray());
-        }
-
-        PdfDictionary resources = acro.getAsDict(PdfName.DR);
-        if (resources == null) {
-            resources = new PdfDictionary();
-            acro.put(PdfName.DR, resources);
-        }
-
-        if (resources.getAsDict(PdfName.FONT) == null) {
-            resources.put(PdfName.FONT, new PdfDictionary());
-        }
-
-        if (acro.get(PdfName.DA) == null) {
-            acro.put(PdfName.DA, new PdfString("/Helv 0 Tf 0 g"));
-        }
-
-        acro.remove(PdfName.NEEDAPPEARANCES);
-        stamper.markUsed(resources);
-        stamper.markUsed(acro);
-    }
-
     private static Rectangle requirePageRectangle(PdfReader reader, int pageNumber) {
         Rectangle pageSize = reader.getPageSize(pageNumber);
         if (pageSize == null) {
@@ -440,7 +375,8 @@ public final class NursingRecordSigner {
         try {
             byte[] resource = readResourceFont();
             if (resource != null) {
-                return BaseFont.createFont("NotoSansCJKsc-Regular.otf", BaseFont.IDENTITY_H, BaseFont.EMBEDDED, false, resource, null, false, false);
+                return BaseFont.createFont("NotoSansCJKsc-Regular.otf", BaseFont.IDENTITY_H, BaseFont.EMBEDDED, false, resource,
+                        null, false, false);
             }
         } catch (IOException e) {
             System.err.println("[sign-row] Failed to load embedded CJK font, falling back to Helvetica: " + e.getMessage());
