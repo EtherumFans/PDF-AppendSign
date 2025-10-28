@@ -6,12 +6,9 @@ import com.itextpdf.text.Rectangle;
 import com.itextpdf.text.pdf.AcroFields;
 import com.itextpdf.text.pdf.BaseFont;
 import com.itextpdf.text.pdf.PdfAnnotation;
-import com.itextpdf.text.pdf.PdfArray;
-import com.itextpdf.text.pdf.PdfBoolean;
 import com.itextpdf.text.pdf.PdfDictionary;
 import com.itextpdf.text.pdf.PdfFormField;
 import com.itextpdf.text.pdf.PdfName;
-import com.itextpdf.text.pdf.PdfNumber;
 import com.itextpdf.text.pdf.PdfReader;
 import com.itextpdf.text.pdf.PdfSignatureAppearance;
 import com.itextpdf.text.pdf.PdfStamper;
@@ -218,11 +215,11 @@ public final class NursingRecordSigner {
             throw new IllegalArgumentException("PKCS12 path and password must be provided");
         }
 
-        RowFieldNames names = RowFieldNames.forRow(params.getRow());
-        Rectangle timeRect = rectForTime(names.row());
-        Rectangle textRect = rectForText(names.row());
-        Rectangle nurseRect = rectForNurse(names.row());
-        Rectangle sigRect = rectForSignature(names.row());
+        int row = params.getRow();
+        Rectangle timeRect = rectForTime(row);
+        Rectangle textRect = rectForText(row);
+        Rectangle nurseRect = rectForNurse(row);
+        Rectangle sigRect = rectForSignature(row);
 
         BaseFont cjkFont = resolveBaseFont(params.getCjkFontPath());
         System.out.println("[sign-row] Using font for text fields: " + cjkFont.getPostscriptFontName());
@@ -238,41 +235,87 @@ public final class NursingRecordSigner {
             os = new FileOutputStream(params.getDestination());
 
             Rectangle pageRect = requirePageRectangle(reader, TARGET_PAGE);
-            validateRectangle(timeRect, pageRect, names.timeField());
-            validateRectangle(textRect, pageRect, names.textField());
-            validateRectangle(nurseRect, pageRect, names.nurseField());
-            validateRectangle(sigRect, pageRect, names.signatureField());
+            validateRectangle(timeRect, pageRect, "time");
+            validateRectangle(textRect, pageRect, "text");
+            validateRectangle(nurseRect, pageRect, "nurse");
+            validateRectangle(sigRect, pageRect, "signature");
 
             stamper = PdfStamper.createSignature(reader, os, '\0', null, true);
 
-            ensureAcroForm(stamper, cjkFont, 12f);
-
-            ensureSigField(stamper, TARGET_PAGE, sigRect, names.signatureField(),
-                    new String[]{names.timeField(), names.textField(), names.nurseField()});
-
-            ensureTextField(stamper, TARGET_PAGE, timeRect, names.timeField(), cjkFont, 12f, Element.ALIGN_LEFT);
-            ensureTextField(stamper, TARGET_PAGE, textRect, names.textField(), cjkFont, 12f, Element.ALIGN_LEFT);
-            ensureTextField(stamper, TARGET_PAGE, nurseRect, names.nurseField(), cjkFont, 12f, Element.ALIGN_LEFT);
-
             AcroFields acroFields = stamper.getAcroFields();
-            if (!acroFields.setField(names.timeField(), safe(params.getTimeValue()))) {
-                throw new IllegalStateException("Unable to set field: " + names.timeField());
+            ensureAcroFormIText5(reader, stamper, cjkFont);
+            acroFields.addSubstitutionFont(cjkFont);
+            acroFields.setGenerateAppearances(true);
+
+            String timeField = resolveOrInjectTextField(
+                    stamper,
+                    acroFields,
+                    row,
+                    new String[]{"row%d.time", "recordTime_%d"},
+                    timeRect,
+                    TARGET_PAGE,
+                    cjkFont,
+                    12f
+            );
+            String textField = resolveOrInjectTextField(
+                    stamper,
+                    acroFields,
+                    row,
+                    new String[]{"row%d.text", "recordText_%d"},
+                    textRect,
+                    TARGET_PAGE,
+                    cjkFont,
+                    12f
+            );
+            String nurseField = resolveOrInjectTextField(
+                    stamper,
+                    acroFields,
+                    row,
+                    new String[]{"row%d.nurse", "recordNurse_%d"},
+                    nurseRect,
+                    TARGET_PAGE,
+                    cjkFont,
+                    12f
+            );
+
+            acroFields.setFieldProperty(timeField, "textfont", cjkFont, null);
+            acroFields.setFieldProperty(textField, "textfont", cjkFont, null);
+            acroFields.setFieldProperty(nurseField, "textfont", cjkFont, null);
+            acroFields.setFieldProperty(timeField, "textsize", 12f, null);
+            acroFields.setFieldProperty(textField, "textsize", 12f, null);
+            acroFields.setFieldProperty(nurseField, "textsize", 12f, null);
+
+            if (!acroFields.setField(timeField, safe(params.getTimeValue()))) {
+                throw new IllegalStateException("Unable to set field: " + timeField
+                        + " fields=" + dumpFieldNames(acroFields));
             }
-            if (!acroFields.setField(names.textField(), safe(params.getTextValue()))) {
-                throw new IllegalStateException("Unable to set field: " + names.textField());
+            if (!acroFields.setField(textField, safe(params.getTextValue()))) {
+                throw new IllegalStateException("Unable to set field: " + textField
+                        + " fields=" + dumpFieldNames(acroFields));
             }
-            if (!acroFields.setField(names.nurseField(), safe(params.getNurse()))) {
-                throw new IllegalStateException("Unable to set field: " + names.nurseField());
+            if (!acroFields.setField(nurseField, safe(params.getNurse()))) {
+                throw new IllegalStateException("Unable to set field: " + nurseField
+                        + " fields=" + dumpFieldNames(acroFields));
             }
-            acroFields.regenerateField(names.timeField());
-            acroFields.regenerateField(names.textField());
-            acroFields.regenerateField(names.nurseField());
-            stamper.partialFormFlattening(names.timeField());
-            stamper.partialFormFlattening(names.textField());
-            stamper.partialFormFlattening(names.nurseField());
+
+            acroFields.setFieldProperty(timeField, "setfflags", PdfFormField.FF_READ_ONLY, null);
+            acroFields.setFieldProperty(textField, "setfflags", PdfFormField.FF_READ_ONLY, null);
+            acroFields.setFieldProperty(nurseField, "setfflags", PdfFormField.FF_READ_ONLY, null);
+            acroFields.regenerateField(timeField);
+            acroFields.regenerateField(textField);
+            acroFields.regenerateField(nurseField);
+
+            String signatureField = resolveOrInjectSigField(
+                    stamper,
+                    acroFields,
+                    row,
+                    new String[]{"sig_row_%d"},
+                    sigRect,
+                    TARGET_PAGE
+            );
 
             PdfSignatureAppearance appearance = stamper.getSignatureAppearance();
-            appearance.setVisibleSignature(names.signatureField());
+            appearance.setVisibleSignature(signatureField);
 
             appearance.setReason(params.getReason());
             appearance.setLocation(params.getLocation());
@@ -348,86 +391,82 @@ public final class NursingRecordSigner {
         }
     }
 
-    private static PdfDictionary ensureAcroForm(PdfStamper stamper, BaseFont subFont, float daFontSize) throws Exception {
-        PdfReader reader = stamper.getReader();
+    private static String dumpFieldNames(AcroFields af) {
+        return String.valueOf(af.getFields().keySet());
+    }
+
+    private String resolveOrInjectTextField(
+            PdfStamper stamper,
+            AcroFields af,
+            int row,
+            String[] candidates,
+            Rectangle rect,
+            int page,
+            BaseFont bf,
+            float fontSize
+    ) throws Exception {
+        for (String c : candidates) {
+            String name = String.format(c, row);
+            if (af.getFieldItem(name) != null) {
+                return name;
+            }
+        }
+        String name = String.format(candidates[0], row);
+        TextField tf = new TextField(stamper.getWriter(), rect, name);
+        tf.setOptions(TextField.EDIT);
+        tf.setFont(bf);
+        tf.setFontSize(fontSize);
+        tf.setAlignment(Element.ALIGN_LEFT);
+        PdfFormField f = tf.getTextField();
+        f.setFlags(PdfAnnotation.FLAGS_PRINT);
+        stamper.addAnnotation(f, page);
+        af.setFieldProperty(name, "textfont", bf, null);
+        af.setFieldProperty(name, "textsize", fontSize, null);
+        af.setGenerateAppearances(true);
+        af.regenerateField(name);
+        return name;
+    }
+
+    private String resolveOrInjectSigField(
+            PdfStamper stamper,
+            AcroFields af,
+            int row,
+            String[] candidates,
+            Rectangle rect,
+            int page
+    ) throws Exception {
+        for (String c : candidates) {
+            String name = String.format(c, row);
+            if (af.getFieldItem(name) != null) {
+                return name;
+            }
+        }
+        String name = String.format(candidates[0], row);
+        PdfFormField sig = PdfFormField.createSignature(stamper.getWriter());
+        sig.setFieldName(name);
+        sig.setWidget(rect, PdfAnnotation.HIGHLIGHT_NONE);
+        sig.setFlags(PdfAnnotation.FLAGS_PRINT);
+        stamper.addAnnotation(sig, page);
+        return name;
+    }
+
+    private void ensureAcroFormIText5(PdfReader reader, PdfStamper stamper, BaseFont bf) {
         PdfDictionary catalog = reader.getCatalog();
         PdfDictionary acro = catalog.getAsDict(PdfName.ACROFORM);
         if (acro == null) {
             acro = new PdfDictionary();
-            acro.put(PdfName.DA, new PdfString("/Helv " + (int) daFontSize + " Tf 0 g"));
-            acro.put(PdfName.SIGFLAGS, new PdfNumber(3));
-            acro.put(PdfName.NEEDAPPEARANCES, PdfBoolean.PDFFALSE);
-
-            PdfDictionary dr = new PdfDictionary();
-            PdfDictionary fonts = new PdfDictionary();
-            fonts.put(new PdfName("Helv"), new PdfName("Helvetica"));
-            fonts.put(new PdfName("ZaDb"), new PdfName("ZapfDingbats"));
-            dr.put(PdfName.FONT, fonts);
-            acro.put(PdfName.DR, dr);
-
             catalog.put(PdfName.ACROFORM, acro);
             stamper.markUsed(catalog);
-            stamper.markUsed(acro);
         }
-        if (subFont != null) {
-            stamper.getAcroFields().addSubstitutionFont(subFont);
+        if (acro.get(PdfName.DA) == null) {
+            acro.put(PdfName.DA, new PdfString("/Helv 12 Tf 0 g"));
         }
-        stamper.getAcroFields().setGenerateAppearances(true);
-        return acro;
-    }
-
-    private PdfFormField ensureTextField(PdfStamper stamper,
-                                         int page,
-                                         Rectangle rect,
-                                         String name,
-                                         BaseFont baseFont,
-                                         float size,
-                                         int align) throws Exception {
-        AcroFields fields = stamper.getAcroFields();
-        if (fields.getFieldItem(name) != null) {
-            return null;
+        PdfDictionary dr = acro.getAsDict(PdfName.DR);
+        if (dr == null) {
+            dr = new PdfDictionary();
+            acro.put(PdfName.DR, dr);
         }
-        TextField tf = new TextField(stamper.getWriter(), rect, name);
-        tf.setFont(baseFont);
-        tf.setFontSize(size);
-        // Do not mark the field read-only here. iText refuses to set the value of
-        // read-only fields programmatically, which results in "Unable to set field"
-        // errors when the document is filled. We flatten the fields immediately
-        // after populating them, so leaving the field editable at creation time does
-        // not affect the final PDF but allows the values to be written reliably.
-        tf.setAlignment(align);
-        PdfFormField field = tf.getTextField();
-        field.setFlags(PdfAnnotation.FLAGS_PRINT);
-        stamper.addAnnotation(field, page);
-        return field;
-    }
-
-    private PdfFormField ensureSigField(PdfStamper stamper,
-                                        int page,
-                                        Rectangle rect,
-                                        String sigName,
-                                        String[] lockFields) {
-        AcroFields fields = stamper.getAcroFields();
-        if (fields.getFieldItem(sigName) != null) {
-            return null;
-        }
-        PdfFormField signature = PdfFormField.createSignature(stamper.getWriter());
-        signature.setFieldName(sigName);
-        signature.setWidget(rect, null);
-        signature.setFlags(PdfAnnotation.FLAGS_PRINT);
-        if (lockFields != null && lockFields.length > 0) {
-            PdfDictionary lock = new PdfDictionary();
-            lock.put(PdfName.TYPE, PdfName.SIGFIELDLOCK);
-            lock.put(PdfName.ACTION, PdfName.INCLUDE);
-            PdfArray fieldsArray = new PdfArray();
-            for (String field : lockFields) {
-                fieldsArray.add(new PdfString(field));
-            }
-            lock.put(PdfName.FIELDS, fieldsArray);
-            signature.put(PdfName.LOCK, lock);
-        }
-        stamper.addAnnotation(signature, page);
-        return signature;
+        stamper.markUsed(acro);
     }
 
     private static String buildLayer2Text(SignParams params) {
@@ -531,59 +570,4 @@ public final class NursingRecordSigner {
         return String.format("[%.2f, %.2f, %.2f, %.2f]", rect.getLeft(), rect.getBottom(), rect.getRight(), rect.getTop());
     }
 
-    private static final class RowFieldNames {
-        private final int row;
-        private final String timeField;
-        private final String textField;
-        private final String nurseField;
-        private final String signatureField;
-
-        private RowFieldNames(int row, String timeField, String textField, String nurseField, String signatureField) {
-            this.row = row;
-            this.timeField = timeField;
-            this.textField = textField;
-            this.nurseField = nurseField;
-            this.signatureField = signatureField;
-        }
-
-        static RowFieldNames forRow(int row) {
-            return new RowFieldNames(row, timeName(row), textName(row), nurseName(row), signatureName(row));
-        }
-
-        static String timeName(int row) {
-            return "recordTime_" + row;
-        }
-
-        static String textName(int row) {
-            return "recordContent_" + row;
-        }
-
-        static String nurseName(int row) {
-            return "nurseName_" + row;
-        }
-
-        static String signatureName(int row) {
-            return "nurseSign_" + row;
-        }
-
-        int row() {
-            return row;
-        }
-
-        String timeField() {
-            return timeField;
-        }
-
-        String textField() {
-            return textField;
-        }
-
-        String nurseField() {
-            return nurseField;
-        }
-
-        String signatureField() {
-            return signatureField;
-        }
-    }
 }
