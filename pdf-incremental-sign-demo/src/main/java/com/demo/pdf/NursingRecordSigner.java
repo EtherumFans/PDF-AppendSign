@@ -2,6 +2,7 @@ package com.demo.pdf;
 
 import com.demo.crypto.DemoKeystoreUtil;
 import com.itextpdf.text.Element;
+import com.itextpdf.text.Font;
 import com.itextpdf.text.Rectangle;
 import com.itextpdf.text.pdf.AcroFields;
 import com.itextpdf.text.pdf.BaseFont;
@@ -219,9 +220,10 @@ public final class NursingRecordSigner {
 
         BaseFont baseFont = resolveBaseFont(params.getCjkFontPath());
         System.out.println("[sign-row] Using font for text fields: " + baseFont.getPostscriptFontName());
+        Font appearanceFont = new Font(baseFont, 10f);
 
-        try (PdfReader reader = new PdfReader(params.getSource());
-             FileOutputStream os = new FileOutputStream(params.getDestination())) {
+        PdfReader reader = new PdfReader(params.getSource());
+        try (FileOutputStream os = new FileOutputStream(params.getDestination())) {
 
             Rectangle pageRect = requirePageRectangle(reader, TARGET_PAGE);
             validateRectangle(timeRect, pageRect, names.timeField());
@@ -230,55 +232,61 @@ public final class NursingRecordSigner {
             validateRectangle(sigRect, pageRect, names.signatureField());
 
             PdfStamper stamper = PdfStamper.createSignature(reader, os, '\0', null, true);
-            AcroFields acroFields = stamper.getAcroFields();
-            acroFields.setGenerateAppearances(true);
+            try {
+                AcroFields acroFields = stamper.getAcroFields();
+                acroFields.setGenerateAppearances(true);
 
-            normalizeAcroForm(reader, stamper);
+                normalizeAcroForm(reader, stamper);
 
-            ensureTextField(stamper, TARGET_PAGE, timeRect, names.timeField(), baseFont, 10f, Element.ALIGN_LEFT);
-            ensureTextField(stamper, TARGET_PAGE, textRect, names.textField(), baseFont, 10f, Element.ALIGN_LEFT);
-            ensureTextField(stamper, TARGET_PAGE, nurseRect, names.nurseField(), baseFont, 10f, Element.ALIGN_LEFT);
+                ensureTextField(stamper, TARGET_PAGE, timeRect, names.timeField(), baseFont, 10f, Element.ALIGN_LEFT);
+                ensureTextField(stamper, TARGET_PAGE, textRect, names.textField(), baseFont, 10f, Element.ALIGN_LEFT);
+                ensureTextField(stamper, TARGET_PAGE, nurseRect, names.nurseField(), baseFont, 10f, Element.ALIGN_LEFT);
 
-            ensureSigField(stamper, TARGET_PAGE, sigRect, names.signatureField(),
-                    new String[]{names.timeField(), names.textField(), names.nurseField()});
+                ensureSigField(stamper, TARGET_PAGE, sigRect, names.signatureField(),
+                        new String[]{names.timeField(), names.textField(), names.nurseField()});
 
-            acroFields = stamper.getAcroFields();
+                acroFields = stamper.getAcroFields();
 
-            setFieldProperties(acroFields, names.timeField(), baseFont, 10f, Element.ALIGN_LEFT);
-            setFieldProperties(acroFields, names.textField(), baseFont, 10f, Element.ALIGN_LEFT);
-            setFieldProperties(acroFields, names.nurseField(), baseFont, 10f, Element.ALIGN_LEFT);
+                setFieldProperties(acroFields, names.timeField(), baseFont, 10f, Element.ALIGN_LEFT);
+                setFieldProperties(acroFields, names.textField(), baseFont, 10f, Element.ALIGN_LEFT);
+                setFieldProperties(acroFields, names.nurseField(), baseFont, 10f, Element.ALIGN_LEFT);
 
-            setAndFlatten(acroFields, stamper, names.timeField(), safe(params.getTimeValue()));
-            setAndFlatten(acroFields, stamper, names.textField(), safe(params.getTextValue()));
-            setAndFlatten(acroFields, stamper, names.nurseField(), safe(params.getNurse()));
+                setAndFlatten(acroFields, stamper, names.timeField(), safe(params.getTimeValue()));
+                setAndFlatten(acroFields, stamper, names.textField(), safe(params.getTextValue()));
+                setAndFlatten(acroFields, stamper, names.nurseField(), safe(params.getNurse()));
 
-            PdfSignatureAppearance appearance = stamper.getSignatureAppearance();
-            appearance.setVisibleSignature(names.signatureField());
-            appearance.setReason(params.getReason());
-            appearance.setLocation(params.getLocation());
-            appearance.setContact(params.getContact());
-            appearance.setSignDate(Calendar.getInstance());
-            appearance.setRenderingMode(PdfSignatureAppearance.RenderingMode.DESCRIPTION);
-            appearance.setLayer2Font(baseFont);
-            appearance.setLayer2Text(buildLayer2Text(params));
-            if (params.isCertifyP3()) {
-                appearance.setCertificationLevel(PdfSignatureAppearance.CERTIFIED_FORM_FILLING_AND_ANNOTATIONS);
-            } else {
-                appearance.setCertificationLevel(PdfSignatureAppearance.NOT_CERTIFIED);
+                PdfSignatureAppearance appearance = stamper.getSignatureAppearance();
+                appearance.setVisibleSignature(names.signatureField());
+                appearance.setReason(params.getReason());
+                appearance.setLocation(params.getLocation());
+                appearance.setContact(params.getContact());
+                appearance.setSignDate(Calendar.getInstance());
+                appearance.setRenderingMode(PdfSignatureAppearance.RenderingMode.DESCRIPTION);
+                appearance.setLayer2Font(appearanceFont);
+                appearance.setLayer2Text(buildLayer2Text(params));
+                if (params.isCertifyP3()) {
+                    appearance.setCertificationLevel(PdfSignatureAppearance.CERTIFIED_FORM_FILLING_AND_ANNOTATIONS);
+                } else {
+                    appearance.setCertificationLevel(PdfSignatureAppearance.NOT_CERTIFIED);
+                }
+
+                ExternalDigest digest = new BouncyCastleDigest();
+                ExternalSignature signature = new PrivateKeySignature(ctx.privateKey(), "SHA256",
+                        BouncyCastleProvider.PROVIDER_NAME);
+                Certificate[] chain = ctx.chain();
+
+                TSAClient tsaClient = null;
+                if (params.getTsaUrl() != null && !params.getTsaUrl().isBlank()) {
+                    tsaClient = new TSAClientBouncyCastle(params.getTsaUrl());
+                }
+
+                MakeSignature.signDetached(appearance, digest, signature, chain, null, null, tsaClient, 0,
+                        MakeSignature.CryptoStandard.CMS);
+            } finally {
+                stamper.close();
             }
-
-            ExternalDigest digest = new BouncyCastleDigest();
-            ExternalSignature signature = new PrivateKeySignature(ctx.privateKey(), "SHA256",
-                    BouncyCastleProvider.PROVIDER_NAME);
-            Certificate[] chain = ctx.chain();
-
-            TSAClient tsaClient = null;
-            if (params.getTsaUrl() != null && !params.getTsaUrl().isBlank()) {
-                tsaClient = new TSAClientBouncyCastle(params.getTsaUrl());
-            }
-
-            MakeSignature.signDetached(appearance, digest, signature, chain, null, null, tsaClient, 0,
-                    MakeSignature.CryptoStandard.CMS);
+        } finally {
+            reader.close();
         }
     }
 
