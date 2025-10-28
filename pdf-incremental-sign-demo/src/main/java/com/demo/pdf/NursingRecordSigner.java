@@ -1,6 +1,5 @@
 package com.demo.pdf;
 
-import com.demo.crypto.DemoKeystoreUtil;
 import com.itextpdf.text.Element;
 import com.itextpdf.text.Font;
 import com.itextpdf.text.Rectangle;
@@ -25,12 +24,15 @@ import com.itextpdf.text.pdf.security.TSAClient;
 import com.itextpdf.text.pdf.security.TSAClientBouncyCastle;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.security.KeyStore;
+import java.security.PrivateKey;
+import java.security.Security;
 import java.security.cert.Certificate;
 import java.util.Calendar;
 import java.util.Objects;
@@ -208,9 +210,9 @@ public final class NursingRecordSigner {
         if (params.getSource() == null || params.getDestination() == null) {
             throw new IllegalArgumentException("Source and destination must be provided");
         }
-
-        DemoKeystoreUtil.ensureProvider();
-        SigningSupport.SigningContext ctx = SigningSupport.resolve(params.getPkcs12Path(), params.getPassword());
+        if (params.getPkcs12Path() == null || params.getPassword() == null) {
+            throw new IllegalArgumentException("PKCS12 path and password must be provided");
+        }
 
         RowFieldNames names = RowFieldNames.forRow(params.getRow());
         Rectangle timeRect = rectForTime(names.row());
@@ -222,8 +224,14 @@ public final class NursingRecordSigner {
         System.out.println("[sign-row] Using font for text fields: " + baseFont.getPostscriptFontName());
         Font appearanceFont = new Font(baseFont, 10f);
 
-        PdfReader reader = new PdfReader(params.getSource());
-        try (FileOutputStream os = new FileOutputStream(params.getDestination())) {
+        PdfReader reader = null;
+        FileOutputStream os = null;
+        PdfStamper stamper = null;
+        boolean preparedForSignature = false;
+
+        try {
+            reader = new PdfReader(params.getSource());
+            os = new FileOutputStream(params.getDestination());
 
             Rectangle pageRect = requirePageRectangle(reader, TARGET_PAGE);
             validateRectangle(timeRect, pageRect, names.timeField());
@@ -231,62 +239,98 @@ public final class NursingRecordSigner {
             validateRectangle(nurseRect, pageRect, names.nurseField());
             validateRectangle(sigRect, pageRect, names.signatureField());
 
-            PdfStamper stamper = PdfStamper.createSignature(reader, os, '\0', null, true);
-            try {
-                AcroFields acroFields = stamper.getAcroFields();
-                acroFields.setGenerateAppearances(true);
+            stamper = PdfStamper.createSignature(reader, os, '\0', null, true);
 
-                normalizeAcroForm(reader, stamper);
+            AcroFields acroFields = stamper.getAcroFields();
+            acroFields.setGenerateAppearances(true);
 
-                ensureTextField(stamper, TARGET_PAGE, timeRect, names.timeField(), baseFont, 10f, Element.ALIGN_LEFT);
-                ensureTextField(stamper, TARGET_PAGE, textRect, names.textField(), baseFont, 10f, Element.ALIGN_LEFT);
-                ensureTextField(stamper, TARGET_PAGE, nurseRect, names.nurseField(), baseFont, 10f, Element.ALIGN_LEFT);
+            normalizeAcroForm(reader, stamper);
 
-                ensureSigField(stamper, TARGET_PAGE, sigRect, names.signatureField(),
-                        new String[]{names.timeField(), names.textField(), names.nurseField()});
+            ensureTextField(stamper, TARGET_PAGE, timeRect, names.timeField(), baseFont, 10f, Element.ALIGN_LEFT);
+            ensureTextField(stamper, TARGET_PAGE, textRect, names.textField(), baseFont, 10f, Element.ALIGN_LEFT);
+            ensureTextField(stamper, TARGET_PAGE, nurseRect, names.nurseField(), baseFont, 10f, Element.ALIGN_LEFT);
 
-                acroFields = stamper.getAcroFields();
+            ensureSigField(stamper, TARGET_PAGE, sigRect, names.signatureField(),
+                    new String[]{names.timeField(), names.textField(), names.nurseField()});
 
-                setFieldProperties(acroFields, names.timeField(), baseFont, 10f, Element.ALIGN_LEFT);
-                setFieldProperties(acroFields, names.textField(), baseFont, 10f, Element.ALIGN_LEFT);
-                setFieldProperties(acroFields, names.nurseField(), baseFont, 10f, Element.ALIGN_LEFT);
+            acroFields = stamper.getAcroFields();
 
-                setAndFlatten(acroFields, stamper, names.timeField(), safe(params.getTimeValue()));
-                setAndFlatten(acroFields, stamper, names.textField(), safe(params.getTextValue()));
-                setAndFlatten(acroFields, stamper, names.nurseField(), safe(params.getNurse()));
+            setFieldProperties(acroFields, names.timeField(), baseFont, 10f, Element.ALIGN_LEFT);
+            setFieldProperties(acroFields, names.textField(), baseFont, 10f, Element.ALIGN_LEFT);
+            setFieldProperties(acroFields, names.nurseField(), baseFont, 10f, Element.ALIGN_LEFT);
 
-                PdfSignatureAppearance appearance = stamper.getSignatureAppearance();
-                appearance.setVisibleSignature(names.signatureField());
-                appearance.setReason(params.getReason());
-                appearance.setLocation(params.getLocation());
-                appearance.setContact(params.getContact());
-                appearance.setSignDate(Calendar.getInstance());
-                appearance.setRenderingMode(PdfSignatureAppearance.RenderingMode.DESCRIPTION);
-                appearance.setLayer2Font(appearanceFont);
-                appearance.setLayer2Text(buildLayer2Text(params));
-                if (params.isCertifyP3()) {
-                    appearance.setCertificationLevel(PdfSignatureAppearance.CERTIFIED_FORM_FILLING_AND_ANNOTATIONS);
-                } else {
-                    appearance.setCertificationLevel(PdfSignatureAppearance.NOT_CERTIFIED);
-                }
+            setAndFlatten(acroFields, stamper, names.timeField(), safe(params.getTimeValue()));
+            setAndFlatten(acroFields, stamper, names.textField(), safe(params.getTextValue()));
+            setAndFlatten(acroFields, stamper, names.nurseField(), safe(params.getNurse()));
 
-                ExternalDigest digest = new BouncyCastleDigest();
-                ExternalSignature signature = new PrivateKeySignature(ctx.privateKey(), "SHA256",
-                        BouncyCastleProvider.PROVIDER_NAME);
-                Certificate[] chain = ctx.chain();
+            PdfSignatureAppearance appearance = stamper.getSignatureAppearance();
+            appearance.setVisibleSignature(names.signatureField());
+            preparedForSignature = true;
 
-                TSAClient tsaClient = null;
-                if (params.getTsaUrl() != null && !params.getTsaUrl().isBlank()) {
-                    tsaClient = new TSAClientBouncyCastle(params.getTsaUrl());
-                }
-
-                MakeSignature.signDetached(appearance, digest, signature, chain, null, null, tsaClient, 0,
-                        MakeSignature.CryptoStandard.CMS);
-            } finally {
-                stamper.close();
+            appearance.setReason(params.getReason());
+            appearance.setLocation(params.getLocation());
+            appearance.setContact(params.getContact());
+            appearance.setSignDate(Calendar.getInstance());
+            appearance.setRenderingMode(PdfSignatureAppearance.RenderingMode.DESCRIPTION);
+            appearance.setLayer2Font(appearanceFont);
+            appearance.setLayer2Text(buildLayer2Text(params));
+            if (params.isCertifyP3()) {
+                appearance.setCertificationLevel(PdfSignatureAppearance.CERTIFIED_FORM_FILLING_AND_ANNOTATIONS);
+            } else {
+                appearance.setCertificationLevel(PdfSignatureAppearance.NOT_CERTIFIED);
             }
+
+            if (Security.getProvider(BouncyCastleProvider.PROVIDER_NAME) == null) {
+                Security.addProvider(new BouncyCastleProvider());
+            }
+
+            KeyStore keyStore = KeyStore.getInstance("PKCS12");
+            char[] passwordChars = params.getPassword() == null ? new char[0] : params.getPassword().toCharArray();
+            try (FileInputStream pkcs12Stream = new FileInputStream(params.getPkcs12Path())) {
+                keyStore.load(pkcs12Stream, passwordChars);
+            }
+            String alias = (String) keyStore.aliases().nextElement();
+            PrivateKey privateKey = (PrivateKey) keyStore.getKey(alias, passwordChars);
+            Certificate[] chain = keyStore.getCertificateChain(alias);
+
+            ExternalDigest digest = new BouncyCastleDigest();
+            ExternalSignature signature = new PrivateKeySignature(privateKey, "SHA256",
+                    BouncyCastleProvider.PROVIDER_NAME);
+
+            TSAClient tsaClient = null;
+            if (params.getTsaUrl() != null && !params.getTsaUrl().isBlank()) {
+                tsaClient = new TSAClientBouncyCastle(params.getTsaUrl());
+            }
+
+            MakeSignature.signDetached(appearance, digest, signature, chain, null, null, tsaClient, 0,
+                    MakeSignature.CryptoStandard.CMS);
+        } catch (Exception e) {
+            try {
+                if (os != null) {
+                    os.close();
+                }
+            } catch (Exception ignore) {
+            }
+            try {
+                if (reader != null) {
+                    reader.close();
+                }
+            } catch (Exception ignore) {
+            }
+            if (preparedForSignature) {
+                try {
+                    new File(params.getDestination()).delete();
+                } catch (Exception ignore) {
+                }
+            }
+            throw e;
         } finally {
-            reader.close();
+            try {
+                if (reader != null) {
+                    reader.close();
+                }
+            } catch (Exception ignore) {
+            }
         }
     }
 
