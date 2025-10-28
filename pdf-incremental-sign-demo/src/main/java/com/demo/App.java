@@ -87,6 +87,13 @@ public class App {
         @CommandLine.Option(names = "--tsaUrl", required = false, description = "Optional TSA URL")
         private String tsaUrl;
 
+        @CommandLine.Option(names = "--certify-p3", required = false,
+                description = "Apply DocMDP certification level 3 (use for the first signing round)")
+        private boolean certifyP3;
+
+        @CommandLine.Option(names = "--cjk-font", required = false, description = "Optional path to a CJK font")
+        private Path cjkFont;
+
         @Override
         public Integer call() throws Exception {
             NursingRecordSigner.SignParams params = new NursingRecordSigner.SignParams();
@@ -102,7 +109,9 @@ public class App {
             params.setLocation(location);
             params.setContact(contact);
             params.setTsaUrl(tsaUrl);
-            NursingRecordSigner.signRow(params);
+            params.setCertifyP3(certifyP3);
+            params.setCjkFontPath(cjkFont != null ? cjkFont.toAbsolutePath().toString() : null);
+            new NursingRecordSigner().signRow(params);
             System.out.println("Signed row " + row + " -> " + destination.toAbsolutePath());
             return 0;
         }
