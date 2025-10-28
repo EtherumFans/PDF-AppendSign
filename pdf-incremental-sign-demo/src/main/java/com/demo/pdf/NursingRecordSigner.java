@@ -7,9 +7,11 @@ import com.itextpdf.text.pdf.AcroFields;
 import com.itextpdf.text.pdf.BaseFont;
 import com.itextpdf.text.pdf.PdfAnnotation;
 import com.itextpdf.text.pdf.PdfArray;
+import com.itextpdf.text.pdf.PdfBoolean;
 import com.itextpdf.text.pdf.PdfDictionary;
 import com.itextpdf.text.pdf.PdfFormField;
 import com.itextpdf.text.pdf.PdfName;
+import com.itextpdf.text.pdf.PdfNumber;
 import com.itextpdf.text.pdf.PdfReader;
 import com.itextpdf.text.pdf.PdfSignatureAppearance;
 import com.itextpdf.text.pdf.PdfStamper;
@@ -222,14 +224,14 @@ public final class NursingRecordSigner {
         Rectangle nurseRect = rectForNurse(names.row());
         Rectangle sigRect = rectForSignature(names.row());
 
-        BaseFont baseFont = resolveBaseFont(params.getCjkFontPath());
-        System.out.println("[sign-row] Using font for text fields: " + baseFont.getPostscriptFontName());
-        Font appearanceFont = new Font(baseFont, 10f);
+        BaseFont cjkFont = resolveBaseFont(params.getCjkFontPath());
+        System.out.println("[sign-row] Using font for text fields: " + cjkFont.getPostscriptFontName());
+        Font appearanceFont = new Font(cjkFont, 10f);
 
         PdfReader reader = null;
         FileOutputStream os = null;
         PdfStamper stamper = null;
-        boolean preparedForSignature = false;
+        boolean signDetachedCalled = false;
 
         try {
             reader = new PdfReader(params.getSource());
@@ -243,31 +245,34 @@ public final class NursingRecordSigner {
 
             stamper = PdfStamper.createSignature(reader, os, '\0', null, true);
 
-            AcroFields acroFields = stamper.getAcroFields();
-            acroFields.setGenerateAppearances(true);
-
-            normalizeAcroForm(reader, stamper);
-
-            ensureTextField(stamper, TARGET_PAGE, timeRect, names.timeField(), baseFont, 10f, Element.ALIGN_LEFT);
-            ensureTextField(stamper, TARGET_PAGE, textRect, names.textField(), baseFont, 10f, Element.ALIGN_LEFT);
-            ensureTextField(stamper, TARGET_PAGE, nurseRect, names.nurseField(), baseFont, 10f, Element.ALIGN_LEFT);
+            ensureAcroForm(stamper, cjkFont, 12f);
 
             ensureSigField(stamper, TARGET_PAGE, sigRect, names.signatureField(),
                     new String[]{names.timeField(), names.textField(), names.nurseField()});
 
-            acroFields = stamper.getAcroFields();
+            ensureTextField(stamper, TARGET_PAGE, timeRect, names.timeField(), cjkFont, 12f, Element.ALIGN_LEFT);
+            ensureTextField(stamper, TARGET_PAGE, textRect, names.textField(), cjkFont, 12f, Element.ALIGN_LEFT);
+            ensureTextField(stamper, TARGET_PAGE, nurseRect, names.nurseField(), cjkFont, 12f, Element.ALIGN_LEFT);
 
-            setFieldProperties(acroFields, names.timeField(), baseFont, 10f, Element.ALIGN_LEFT);
-            setFieldProperties(acroFields, names.textField(), baseFont, 10f, Element.ALIGN_LEFT);
-            setFieldProperties(acroFields, names.nurseField(), baseFont, 10f, Element.ALIGN_LEFT);
-
-            setAndFlatten(acroFields, stamper, names.timeField(), safe(params.getTimeValue()));
-            setAndFlatten(acroFields, stamper, names.textField(), safe(params.getTextValue()));
-            setAndFlatten(acroFields, stamper, names.nurseField(), safe(params.getNurse()));
+            AcroFields acroFields = stamper.getAcroFields();
+            if (!acroFields.setField(names.timeField(), safe(params.getTimeValue()))) {
+                throw new IllegalStateException("Unable to set field: " + names.timeField());
+            }
+            if (!acroFields.setField(names.textField(), safe(params.getTextValue()))) {
+                throw new IllegalStateException("Unable to set field: " + names.textField());
+            }
+            if (!acroFields.setField(names.nurseField(), safe(params.getNurse()))) {
+                throw new IllegalStateException("Unable to set field: " + names.nurseField());
+            }
+            acroFields.regenerateField(names.timeField());
+            acroFields.regenerateField(names.textField());
+            acroFields.regenerateField(names.nurseField());
+            stamper.partialFormFlattening(names.timeField());
+            stamper.partialFormFlattening(names.textField());
+            stamper.partialFormFlattening(names.nurseField());
 
             PdfSignatureAppearance appearance = stamper.getSignatureAppearance();
             appearance.setVisibleSignature(names.signatureField());
-            preparedForSignature = true;
 
             appearance.setReason(params.getReason());
             appearance.setLocation(params.getLocation());
@@ -304,9 +309,16 @@ public final class NursingRecordSigner {
                 tsaClient = new TSAClientBouncyCastle(params.getTsaUrl());
             }
 
+            signDetachedCalled = true;
             MakeSignature.signDetached(appearance, digest, signature, chain, null, null, tsaClient, 0,
                     MakeSignature.CryptoStandard.CMS);
         } catch (Exception e) {
+            try {
+                if (!signDetachedCalled && stamper != null) {
+                    stamper.close();
+                }
+            } catch (Exception ignore) {
+            }
             try {
                 if (os != null) {
                     os.close();
@@ -319,7 +331,7 @@ public final class NursingRecordSigner {
                 }
             } catch (Exception ignore) {
             }
-            if (preparedForSignature) {
+            if (!signDetachedCalled) {
                 try {
                     new File(params.getDestination()).delete();
                 } catch (Exception ignore) {
@@ -336,16 +348,32 @@ public final class NursingRecordSigner {
         }
     }
 
-    private void normalizeAcroForm(PdfReader reader, PdfStamper stamper) {
+    private static PdfDictionary ensureAcroForm(PdfStamper stamper, BaseFont subFont, float daFontSize) throws Exception {
+        PdfReader reader = stamper.getReader();
         PdfDictionary catalog = reader.getCatalog();
-        PdfDictionary acroForm = catalog.getAsDict(PdfName.ACROFORM);
-        if (acroForm == null) {
-            acroForm = new PdfDictionary();
-            catalog.put(PdfName.ACROFORM, acroForm);
-            stamper.markUsed(catalog);
+        PdfDictionary acro = catalog.getAsDict(PdfName.ACROFORM);
+        if (acro == null) {
+            acro = new PdfDictionary();
+            acro.put(PdfName.DA, new PdfString("/Helv " + (int) daFontSize + " Tf 0 g"));
+            acro.put(PdfName.SIGFLAGS, new PdfNumber(3));
+            acro.put(PdfName.NEEDAPPEARANCES, PdfBoolean.PDFFALSE);
+
+            PdfDictionary dr = new PdfDictionary();
+            PdfDictionary fonts = new PdfDictionary();
+            fonts.put(new PdfName("Helv"), new PdfName("Helvetica"));
+            fonts.put(new PdfName("ZaDb"), new PdfName("ZapfDingbats"));
+            dr.put(PdfName.FONT, fonts);
+            acro.put(PdfName.DR, dr);
+
+            catalog.put(PdfName.ACROFORM, acro);
+            stamper.getWriter().markUsed(catalog);
+            stamper.getWriter().markUsed(acro);
         }
-        acroForm.remove(PdfName.NEEDAPPEARANCES);
-        stamper.markUsed(acroForm);
+        if (subFont != null) {
+            stamper.getAcroFields().addSubstitutionFont(subFont);
+        }
+        stamper.getAcroFields().setGenerateAppearances(true);
+        return acro;
     }
 
     private PdfFormField ensureTextField(PdfStamper stamper,
@@ -362,6 +390,7 @@ public final class NursingRecordSigner {
         TextField tf = new TextField(stamper.getWriter(), rect, name);
         tf.setFont(baseFont);
         tf.setFontSize(size);
+        tf.setOptions(TextField.READ_ONLY);
         tf.setAlignment(align);
         PdfFormField field = tf.getTextField();
         field.setFlags(PdfAnnotation.FLAGS_PRINT);
@@ -395,27 +424,6 @@ public final class NursingRecordSigner {
         }
         stamper.addAnnotation(signature, page);
         return signature;
-    }
-
-    private void setFieldProperties(AcroFields fields, String name, BaseFont baseFont, float size, int align)
-            throws Exception {
-        if (fields.getFieldItem(name) == null) {
-            return;
-        }
-        fields.setFieldProperty(name, "textfont", baseFont, null);
-        fields.setFieldProperty(name, "textsize", Float.valueOf(size), null);
-        fields.setFieldProperty(name, "alignment", align, null);
-    }
-
-    private void setAndFlatten(AcroFields af, PdfStamper stamper, String name, String value) throws Exception {
-        if (af.getFieldItem(name) == null) {
-            throw new IllegalStateException("Field not found: " + name);
-        }
-        if (!af.setField(name, value)) {
-            throw new IllegalStateException("Unable to set field: " + name);
-        }
-        af.regenerateField(name);
-        stamper.partialFormFlattening(name);
     }
 
     private static String buildLayer2Text(SignParams params) {
