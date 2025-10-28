@@ -366,8 +366,8 @@ public final class NursingRecordSigner {
             acro.put(PdfName.DR, dr);
 
             catalog.put(PdfName.ACROFORM, acro);
-            stamper.getWriter().markUsed(catalog);
-            stamper.getWriter().markUsed(acro);
+            stamper.markUsed(catalog);
+            stamper.markUsed(acro);
         }
         if (subFont != null) {
             stamper.getAcroFields().addSubstitutionFont(subFont);
