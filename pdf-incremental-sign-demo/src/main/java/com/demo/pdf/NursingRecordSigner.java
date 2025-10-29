@@ -95,6 +95,12 @@ public final class NursingRecordSigner {
         private String fontPath;
         private float fontSize = 10f;
         private float textMaxWidth = 330f;
+        private boolean signVisible = true;
+        private String signFieldTemplate = "sig_row_{row}";
+        private float signX = -1f;
+        private float signWidth = 120f;
+        private float signHeight = 18f;
+        private float signYOffset = -12f;
 
         public String getSource() {
             return source;
@@ -293,6 +299,54 @@ public final class NursingRecordSigner {
         public void setTextMaxWidth(float textMaxWidth) {
             this.textMaxWidth = textMaxWidth;
         }
+
+        public boolean isSignVisible() {
+            return signVisible;
+        }
+
+        public void setSignVisible(boolean signVisible) {
+            this.signVisible = signVisible;
+        }
+
+        public String getSignFieldTemplate() {
+            return signFieldTemplate;
+        }
+
+        public void setSignFieldTemplate(String signFieldTemplate) {
+            this.signFieldTemplate = signFieldTemplate;
+        }
+
+        public float getSignX() {
+            return signX;
+        }
+
+        public void setSignX(float signX) {
+            this.signX = signX;
+        }
+
+        public float getSignWidth() {
+            return signWidth;
+        }
+
+        public void setSignWidth(float signWidth) {
+            this.signWidth = signWidth;
+        }
+
+        public float getSignHeight() {
+            return signHeight;
+        }
+
+        public void setSignHeight(float signHeight) {
+            this.signHeight = signHeight;
+        }
+
+        public float getSignYOffset() {
+            return signYOffset;
+        }
+
+        public void setSignYOffset(float signYOffset) {
+            this.signYOffset = signYOffset;
+        }
     }
 
     public NursingRecordSigner() {
@@ -314,8 +368,6 @@ public final class NursingRecordSigner {
         Rectangle timeRect = rectForTime(row);
         Rectangle textRect = rectForText(row);
         Rectangle nurseRect = rectForNurse(row);
-        Rectangle sigRect = rectForSignature(row);
-
         boolean fallbackActive = shouldFallbackToDrawing(params);
         String sourceForSigning = params.getSource();
         if (fallbackActive) {
@@ -339,8 +391,6 @@ public final class NursingRecordSigner {
             validateRectangle(timeRect, pageRect, "time");
             validateRectangle(textRect, pageRect, "text");
             validateRectangle(nurseRect, pageRect, "nurse");
-            validateRectangle(sigRect, pageRect, "signature");
-
             stamper = PdfStamper.createSignature(reader, os, '\0', null, true);
 
             AcroFields acroFields = stamper.getAcroFields();
@@ -417,20 +467,30 @@ public final class NursingRecordSigner {
                 acroFields.regenerateField(nurseField.name);
             }
 
-            FieldResolution signatureField = resolveOrInjectSigField(
-                    stamper,
-                    acroFields,
-                    row,
-                    new String[]{"sig_row_%d"},
-                    sigRect,
-                    TARGET_PAGE
-            );
-            if (signatureField.created) {
-                acroFields = stamper.getAcroFields();
-            }
-
             PdfSignatureAppearance appearance = stamper.getSignatureAppearance();
-            appearance.setVisibleSignature(signatureField.name);
+            String signFieldName = resolveSignFieldName(params.getSignFieldTemplate(), row);
+            boolean hasField = signFieldName != null
+                    && acroFields != null
+                    && acroFields.getFieldItem(signFieldName) != null;
+
+            if (params.isSignVisible()) {
+                if (hasField) {
+                    System.out.println("[visible-sign:field] Using existing field: " + signFieldName);
+                    appearance.setVisibleSignature(signFieldName);
+                } else {
+                    float yBase = params.getTableTopY() - (row - 1) * params.getRowHeight();
+                    float x = params.getSignX() >= 0 ? params.getSignX() : params.getNurseX();
+                    float yBottom = yBase + params.getSignYOffset();
+                    float x2 = x + params.getSignWidth();
+                    float y2 = yBottom + params.getSignHeight();
+                    Rectangle rect = new Rectangle(x, yBottom, x2, y2);
+                    System.out.printf("[visible-sign:rect] page=%d rect=[%.1f,%.1f,%.1f,%.1f] field=%s%n",
+                            params.getPageIndex(), x, yBottom, x2, y2, signFieldName);
+                    appearance.setVisibleSignature(rect, params.getPageIndex(), signFieldName);
+                }
+            } else {
+                System.out.println("[visible-sign:none] Invisible signature requested");
+            }
 
             appearance.setReason(params.getReason());
             appearance.setLocation(params.getLocation());
@@ -763,29 +823,6 @@ public final class NursingRecordSigner {
         return new FieldResolution(name, true);
     }
 
-    private FieldResolution resolveOrInjectSigField(
-            PdfStamper stamper,
-            AcroFields af,
-            int row,
-            String[] candidates,
-            Rectangle rect,
-            int page
-    ) throws Exception {
-        for (String c : candidates) {
-            String name = String.format(c, row);
-            if (af.getFieldItem(name) != null) {
-                return new FieldResolution(name, false);
-            }
-        }
-        String name = String.format(candidates[0], row);
-        PdfFormField sig = PdfFormField.createSignature(stamper.getWriter());
-        sig.setFieldName(name);
-        sig.setWidget(rect, PdfAnnotation.HIGHLIGHT_NONE);
-        sig.setFlags(PdfAnnotation.FLAGS_PRINT);
-        stamper.addAnnotation(sig, page);
-        return new FieldResolution(name, true);
-    }
-
     private static final class FieldResolution {
         final String name;
         final boolean created;
@@ -794,6 +831,13 @@ public final class NursingRecordSigner {
             this.name = name;
             this.created = created;
         }
+    }
+
+    private static String resolveSignFieldName(String template, int row) {
+        String effective = (template == null || template.isEmpty())
+                ? "sig_row_{row}"
+                : template;
+        return effective.replace("{row}", Integer.toString(row));
     }
 
     private void ensureAcroFormIText5(PdfReader reader, PdfStamper stamper, BaseFont bf) {

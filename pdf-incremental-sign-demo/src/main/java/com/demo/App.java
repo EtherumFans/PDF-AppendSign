@@ -5,6 +5,11 @@ import com.demo.pdf.ElectronicSignatureSigner;
 import com.demo.pdf.NursingRecordSigner;
 import com.demo.pdf.NursingRecordTemplate;
 import com.demo.pdf.SignatureVerifier;
+import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationWidget;
+import org.apache.pdfbox.pdmodel.interactive.form.PDAcroForm;
+import org.apache.pdfbox.pdmodel.interactive.form.PDField;
 import picocli.CommandLine;
 
 import java.nio.file.Files;
@@ -24,7 +29,8 @@ public class App {
                     SignRow.class,
                     SignElectronic.class,
                     VerifyPdf.class,
-                    GenDemoP12.class
+                    GenDemoP12.class,
+                    ListFields.class
             })
     static class Root implements Runnable {
         @Override
@@ -134,6 +140,30 @@ public class App {
                 description = "Maximum width for wrapping the record text column when fallback drawing")
         private float textMaxWidth;
 
+        @CommandLine.Option(names = "--sign-visible", defaultValue = "true",
+                description = "Place a visible signature (true) or create an invisible signature (false).")
+        private boolean signVisible;
+
+        @CommandLine.Option(names = "--sign-field", defaultValue = "sig_row_{row}",
+                description = "Signature field name template. If field doesn't exist, a new field will be created when rectangle is used.")
+        private String signFieldTemplate;
+
+        @CommandLine.Option(names = "--sign-x", defaultValue = "-1",
+                description = "Left X of the visible signature rectangle. If <0, default to nurse column X.")
+        private float signX;
+
+        @CommandLine.Option(names = "--sign-width", defaultValue = "120",
+                description = "Width of the visible signature rectangle.")
+        private float signWidth;
+
+        @CommandLine.Option(names = "--sign-height", defaultValue = "18",
+                description = "Height of the visible signature rectangle.")
+        private float signHeight;
+
+        @CommandLine.Option(names = "--sign-y-offset", defaultValue = "-12",
+                description = "YOffset from the computed row baseline Y to the bottom of the signature rectangle.")
+        private float signYOffset;
+
         @Override
         public Integer call() throws Exception {
             NursingRecordSigner.SignParams params = new NursingRecordSigner.SignParams();
@@ -161,8 +191,57 @@ public class App {
             params.setFontPath(fontPath != null ? fontPath.toAbsolutePath().toString() : null);
             params.setFontSize(fontSize);
             params.setTextMaxWidth(textMaxWidth);
+            params.setSignVisible(signVisible);
+            params.setSignFieldTemplate(signFieldTemplate);
+            params.setSignX(signX);
+            params.setSignWidth(signWidth);
+            params.setSignHeight(signHeight);
+            params.setSignYOffset(signYOffset);
             new NursingRecordSigner().signRow(params);
             System.out.println("Signed row " + row + " -> " + destination.toAbsolutePath());
+            return 0;
+        }
+    }
+
+    @CommandLine.Command(name = "list-fields", description = "List all AcroForm fields in a PDF")
+    static class ListFields implements Callable<Integer> {
+
+        @CommandLine.Option(names = "--src", required = true, description = "Source PDF")
+        private Path source;
+
+        @Override
+        public Integer call() throws Exception {
+            Path srcFile = source.toAbsolutePath();
+            if (!Files.exists(srcFile)) {
+                System.err.println("Source PDF does not exist: " + srcFile);
+                return 1;
+            }
+
+            try (PDDocument doc = Loader.loadPDF(srcFile.toFile())) {
+                PDAcroForm form = doc.getDocumentCatalog().getAcroForm();
+                if (form == null || form.getFields().isEmpty()) {
+                    System.out.println("No AcroForm fields found.");
+                    return 0;
+                }
+
+                for (PDField field : form.getFieldTree()) {
+                    PDAnnotationWidget widget = field.getWidgets().isEmpty() ? null : field.getWidgets().get(0);
+                    Integer pageIndex = null;
+                    String rect = "n/a";
+                    if (widget != null) {
+                        if (widget.getPage() != null) {
+                            pageIndex = doc.getPages().indexOf(widget.getPage()) + 1;
+                        }
+                        if (widget.getRectangle() != null) {
+                            rect = widget.getRectangle().toString();
+                        }
+                    }
+                    System.out.printf("%s | %s | page=%s | rect=%s%n",
+                            field.getFullyQualifiedName(), field.getClass().getSimpleName(),
+                            pageIndex, rect);
+                }
+            }
+
             return 0;
         }
     }
