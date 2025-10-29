@@ -373,11 +373,23 @@ public final class NursingRecordSigner {
         float rowHeight = params.getRowHeight();
         float nurseX = params.getNurseX();
         float yBase = tableTopY - (row - 1) * rowHeight;
-        boolean certified = isDocumentCertified(params.getSource());
+
+        boolean sourceCertified = false;
+        PdfReader certificationReader = null;
+        try {
+            certificationReader = new PdfReader(params.getSource());
+            PdfDictionary perms = certificationReader.getCatalog().getAsDict(PdfName.PERMS);
+            sourceCertified = perms != null && perms.getAsDict(PdfName.DOCMDP) != null;
+        } finally {
+            if (certificationReader != null) {
+                certificationReader.close();
+            }
+        }
+
         boolean fallbackActive = shouldFallbackToDrawing(params);
         String sourceForSigning = params.getSource();
         if (fallbackActive) {
-            sourceForSigning = applyFallbackDrawing(params, certified);
+            sourceForSigning = applyFallbackDrawing(params, sourceCertified);
         }
 
         BaseFont cjkFont = resolveBaseFont(params.getCjkFontPath());
@@ -391,6 +403,8 @@ public final class NursingRecordSigner {
 
         try {
             reader = new PdfReader(sourceForSigning);
+            PdfDictionary perms = reader.getCatalog().getAsDict(PdfName.PERMS);
+            boolean certified = perms != null && perms.getAsDict(PdfName.DOCMDP) != null;
             os = new FileOutputStream(params.getDestination());
 
             Rectangle pageRect = requirePageRectangle(reader, pageIndex);
@@ -620,19 +634,6 @@ public final class NursingRecordSigner {
         return false;
     }
 
-    private boolean isDocumentCertified(String source) throws IOException {
-        PdfReader reader = null;
-        try {
-            reader = new PdfReader(source);
-            PdfDictionary perms = reader.getCatalog().getAsDict(PdfName.PERMS);
-            return perms != null && perms.getAsDict(PdfName.DOCMDP) != null;
-        } finally {
-            if (reader != null) {
-                reader.close();
-            }
-        }
-    }
-
     private String applyFallbackDrawing(SignParams params, boolean certified) throws IOException {
         Path temp = Files.createTempFile("nursing-fallback-row", ".pdf");
         temp.toFile().deleteOnExit();
@@ -740,12 +741,12 @@ public final class NursingRecordSigner {
         float effectiveWidth = Math.max(1f, width);
         float effectiveHeight = Math.max(1f, height);
         Rectangle rect = new Rectangle(x, bottom, x + effectiveWidth, bottom + effectiveHeight);
-        PdfAnnotation annotation = PdfAnnotation.createFreeText(stamper.getWriter(), rect, text, null);
-        annotation.setFlags(PdfAnnotation.FLAGS_PRINT);
-        PdfAppearance appearance = PdfAppearance.createAppearance(stamper.getWriter(), 0, 0);
-        appearance.setFontAndSize(font, fontSize);
-        annotation.setAppearance(PdfAnnotation.APPEARANCE_NORMAL, appearance);
-        stamper.addAnnotation(annotation, pageIndex);
+        PdfAnnotation ann = PdfAnnotation.createFreeText(stamper.getWriter(), rect, text, null);
+        ann.setFlags(PdfAnnotation.FLAGS_PRINT);
+        PdfAppearance da = PdfAppearance.createAppearance(stamper.getWriter(), 0, 0);
+        da.setFontAndSize(font, fontSize);
+        ann.setAppearance(PdfAnnotation.APPEARANCE_NORMAL, da);
+        stamper.addAnnotation(ann, pageIndex);
     }
 
     private BaseFont resolveFallbackBaseFont(SignParams params) throws Exception {
