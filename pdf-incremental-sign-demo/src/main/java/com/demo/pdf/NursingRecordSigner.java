@@ -6,6 +6,7 @@ import com.itextpdf.text.Rectangle;
 import com.itextpdf.text.pdf.AcroFields;
 import com.itextpdf.text.pdf.BaseFont;
 import com.itextpdf.text.pdf.PdfAnnotation;
+import com.itextpdf.text.pdf.PdfAppearance;
 import com.itextpdf.text.pdf.PdfDictionary;
 import com.itextpdf.text.pdf.PdfFormField;
 import com.itextpdf.text.pdf.PdfName;
@@ -372,10 +373,11 @@ public final class NursingRecordSigner {
         float rowHeight = params.getRowHeight();
         float nurseX = params.getNurseX();
         float yBase = tableTopY - (row - 1) * rowHeight;
+        boolean certified = isDocumentCertified(params.getSource());
         boolean fallbackActive = shouldFallbackToDrawing(params);
         String sourceForSigning = params.getSource();
         if (fallbackActive) {
-            sourceForSigning = applyFallbackDrawing(params);
+            sourceForSigning = applyFallbackDrawing(params, certified);
         }
 
         BaseFont cjkFont = resolveBaseFont(params.getCjkFontPath());
@@ -501,7 +503,12 @@ public final class NursingRecordSigner {
             appearance.setRenderingMode(PdfSignatureAppearance.RenderingMode.DESCRIPTION);
             appearance.setLayer2Font(appearanceFont);
             appearance.setLayer2Text(buildLayer2Text(params));
-            if (params.isCertifyP3()) {
+            if (certified) {
+                if (params.isCertifyP3()) {
+                    System.err.println("[sign-row] Document already certified; skipping DocMDP update.");
+                }
+                appearance.setCertificationLevel(PdfSignatureAppearance.NOT_CERTIFIED);
+            } else if (params.isCertifyP3()) {
                 appearance.setCertificationLevel(PdfSignatureAppearance.CERTIFIED_FORM_FILLING_AND_ANNOTATIONS);
             } else {
                 appearance.setCertificationLevel(PdfSignatureAppearance.NOT_CERTIFIED);
@@ -613,7 +620,20 @@ public final class NursingRecordSigner {
         return false;
     }
 
-    private String applyFallbackDrawing(SignParams params) throws IOException {
+    private boolean isDocumentCertified(String source) throws IOException {
+        PdfReader reader = null;
+        try {
+            reader = new PdfReader(source);
+            PdfDictionary perms = reader.getCatalog().getAsDict(PdfName.PERMS);
+            return perms != null && perms.getAsDict(PdfName.DOCMDP) != null;
+        } finally {
+            if (reader != null) {
+                reader.close();
+            }
+        }
+    }
+
+    private String applyFallbackDrawing(SignParams params, boolean certified) throws IOException {
         Path temp = Files.createTempFile("nursing-fallback-row", ".pdf");
         temp.toFile().deleteOnExit();
         PdfReader reader = null;
@@ -624,28 +644,32 @@ public final class NursingRecordSigner {
             PdfStamper stamper = null;
             try {
                 stamper = new PdfStamper(reader, fos, '\0', true);
-                BaseFont font;
-                try {
-                    font = resolveFallbackBaseFont(params);
-                } catch (Exception e) {
-                    throw new IOException("Unable to resolve fallback font", e);
+                if (certified) {
+                    applyFallbackAnnotations(stamper, params);
+                } else {
+                    BaseFont font;
+                    try {
+                        font = resolveFallbackBaseFont(params);
+                    } catch (Exception e) {
+                        throw new IOException("Unable to resolve fallback font", e);
+                    }
+                    drawRowFallback(
+                            stamper,
+                            params.getPageIndex(),
+                            params.getRow(),
+                            params.getTableTopY(),
+                            params.getRowHeight(),
+                            params.getTimeX(),
+                            safe(params.getTimeValue()),
+                            params.getTextX(),
+                            safe(params.getTextValue()),
+                            params.getNurseX(),
+                            safe(params.getNurse()),
+                            font,
+                            params.getFontSize(),
+                            params.getTextMaxWidth()
+                    );
                 }
-                drawRowFallback(
-                        stamper,
-                        params.getPageIndex(),
-                        params.getRow(),
-                        params.getTableTopY(),
-                        params.getRowHeight(),
-                        params.getTimeX(),
-                        safe(params.getTimeValue()),
-                        params.getTextX(),
-                        safe(params.getTextValue()),
-                        params.getNurseX(),
-                        safe(params.getNurse()),
-                        font,
-                        params.getFontSize(),
-                        params.getTextMaxWidth()
-                );
             } catch (DocumentException e) {
                 throw new IOException("Failed to apply fallback drawing", e);
             } finally {
@@ -666,6 +690,62 @@ public final class NursingRecordSigner {
             }
         }
         return temp.toAbsolutePath().toString();
+    }
+
+    private void applyFallbackAnnotations(PdfStamper stamper, SignParams params) throws IOException {
+        BaseFont annotationFont;
+        try {
+            annotationFont = BaseFont.createFont("Helvetica", BaseFont.WINANSI, BaseFont.EMBEDDED);
+        } catch (DocumentException e) {
+            throw new IOException("Unable to initialize annotation font", e);
+        }
+        int pageIndex = params.getPageIndex();
+        int row = params.getRow();
+        float tableTopY = params.getTableTopY();
+        float rowHeight = params.getRowHeight();
+        float baselineY = tableTopY - (row - 1) * rowHeight;
+        float baselineOffset = params.getFontSize();
+        float boxBottom = baselineY - baselineOffset;
+        float defaultHeight = Math.max(rowHeight, baselineOffset * 1.5f);
+
+        float timeWidth = Math.max(60f, params.getTextX() - params.getTimeX());
+        float textWidth = params.getTextMaxWidth() > 0 ? params.getTextMaxWidth() : 330f;
+        float nurseWidth = Math.max(60f, params.getSignWidth());
+
+        String timeText = safe(params.getTimeValue());
+        addFreeTextAnnotation(stamper, pageIndex, params.getTimeX(), boxBottom, timeWidth, defaultHeight,
+                timeText, annotationFont, params.getFontSize());
+
+        String nurseText = safe(params.getNurse());
+        addFreeTextAnnotation(stamper, pageIndex, params.getNurseX(), boxBottom, nurseWidth, defaultHeight,
+                nurseText, annotationFont, params.getFontSize());
+
+        String textValue = safe(params.getTextValue());
+        List<String> wrapped = wrapText(textValue, annotationFont, params.getFontSize(), textWidth);
+        String content = String.join("\n", wrapped);
+        float textHeight = Math.max(defaultHeight, wrapped.size() * params.getFontSize() * 1.2f);
+        addFreeTextAnnotation(stamper, pageIndex, params.getTextX(), boxBottom, textWidth, textHeight,
+                content, annotationFont, params.getFontSize());
+
+        System.out.printf("[fallback-ann] page=%d row=%d baseline=%.2f time=(%.1f,%.1f) text=(%.1f,%.1f) nurse=(%.1f,%.1f)%n",
+                pageIndex, row, baselineY, params.getTimeX(), baselineY, params.getTextX(), baselineY,
+                params.getNurseX(), baselineY);
+    }
+
+    private void addFreeTextAnnotation(PdfStamper stamper, int pageIndex, float x, float bottom,
+            float width, float height, String text, BaseFont font, float fontSize) throws IOException {
+        if (text == null || text.isBlank()) {
+            return;
+        }
+        float effectiveWidth = Math.max(1f, width);
+        float effectiveHeight = Math.max(1f, height);
+        Rectangle rect = new Rectangle(x, bottom, x + effectiveWidth, bottom + effectiveHeight);
+        PdfAnnotation annotation = PdfAnnotation.createFreeText(stamper.getWriter(), rect, text, null);
+        annotation.setFlags(PdfAnnotation.FLAGS_PRINT);
+        PdfAppearance appearance = PdfAppearance.createAppearance(stamper.getWriter(), 0, 0);
+        appearance.setFontAndSize(font, fontSize);
+        annotation.setAppearance(PdfAnnotation.APPEARANCE_NORMAL, appearance);
+        stamper.addAnnotation(annotation, pageIndex);
     }
 
     private BaseFont resolveFallbackBaseFont(SignParams params) throws Exception {
