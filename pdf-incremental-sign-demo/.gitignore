@@ -1,0 +1,14 @@
+# Build outputs
+target/
+*.iml
+*.class
+
+# IDE/OS noise
+.idea/
+.vscode/
+.DS_Store
+
+# Local test artifacts
+*.pdf
+*.p12
+src/main/resources/NotoSansCJKsc-Regular.*
