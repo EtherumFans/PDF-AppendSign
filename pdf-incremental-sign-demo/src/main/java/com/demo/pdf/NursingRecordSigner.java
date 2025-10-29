@@ -472,11 +472,9 @@ public final class NursingRecordSigner {
             }
 
             PdfSignatureAppearance appearance = stamper.getSignatureAppearance();
-            String signFieldName = resolveSignFieldName(params.getSignFieldTemplate(), row);
-            AcroFields readerAcroFields = reader.getAcroFields();
-            boolean hasField = signFieldName != null
-                    && readerAcroFields != null
-                    && readerAcroFields.getFieldItem(signFieldName) != null;
+            String signFieldName = "sig_row_" + row;
+            AcroFields af = reader.getAcroFields();
+            boolean hasField = af != null && af.getFieldItem(signFieldName) != null;
 
             if (params.isSignVisible()) {
                 if (hasField) {
@@ -835,13 +833,6 @@ public final class NursingRecordSigner {
             this.name = name;
             this.created = created;
         }
-    }
-
-    private static String resolveSignFieldName(String template, int row) {
-        String effective = (template == null || template.isEmpty())
-                ? "sig_row_{row}"
-                : template;
-        return effective.replace("{row}", Integer.toString(row));
     }
 
     private void ensureAcroFormIText5(PdfReader reader, PdfStamper stamper, BaseFont bf) {
