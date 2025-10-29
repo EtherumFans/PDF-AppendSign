@@ -13,6 +13,7 @@
         <itext5.version>5.5.13.3</itext5.version>
         <picocli.version>4.7.6</picocli.version>
         <bc.version>1.78.1</bc.version>
+        <pdfbox.version>3.0.2</pdfbox.version>
     </properties>
 
     <dependencies>
@@ -50,6 +51,11 @@
             <groupId>info.picocli</groupId>
             <artifactId>picocli</artifactId>
             <version>${picocli.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox</artifactId>
+            <version>${pdfbox.version}</version>
         </dependency>
     </dependencies>
 
