@@ -49,7 +49,6 @@ import com.itextpdf.text.pdf.PdfContentByte;
 public final class NursingRecordSigner {
 
     private static final float ROW_STEP = 120f;
-    private static final int TARGET_PAGE = 1;
     private static final float TIME_LEFT = 36f;
     private static final float TIME_RIGHT = 106f;
     private static final float TIME_BOTTOM = 677.92f;
@@ -368,6 +367,11 @@ public final class NursingRecordSigner {
         Rectangle timeRect = rectForTime(row);
         Rectangle textRect = rectForText(row);
         Rectangle nurseRect = rectForNurse(row);
+        int pageIndex = params.getPageIndex();
+        float tableTopY = params.getTableTopY();
+        float rowHeight = params.getRowHeight();
+        float nurseX = params.getNurseX();
+        float yBase = tableTopY - (row - 1) * rowHeight;
         boolean fallbackActive = shouldFallbackToDrawing(params);
         String sourceForSigning = params.getSource();
         if (fallbackActive) {
@@ -387,7 +391,7 @@ public final class NursingRecordSigner {
             reader = new PdfReader(sourceForSigning);
             os = new FileOutputStream(params.getDestination());
 
-            Rectangle pageRect = requirePageRectangle(reader, TARGET_PAGE);
+            Rectangle pageRect = requirePageRectangle(reader, pageIndex);
             validateRectangle(timeRect, pageRect, "time");
             validateRectangle(textRect, pageRect, "text");
             validateRectangle(nurseRect, pageRect, "nurse");
@@ -405,7 +409,7 @@ public final class NursingRecordSigner {
                         row,
                         new String[]{"row%d.time", "recordTime_%d"},
                         timeRect,
-                        TARGET_PAGE,
+                        pageIndex,
                         cjkFont,
                         12f
                 );
@@ -418,7 +422,7 @@ public final class NursingRecordSigner {
                         row,
                         new String[]{"row%d.text", "recordText_%d"},
                         textRect,
-                        TARGET_PAGE,
+                        pageIndex,
                         cjkFont,
                         12f
                 );
@@ -431,7 +435,7 @@ public final class NursingRecordSigner {
                         row,
                         new String[]{"row%d.nurse", "recordNurse_%d"},
                         nurseRect,
-                        TARGET_PAGE,
+                        pageIndex,
                         cjkFont,
                         12f
                 );
@@ -469,24 +473,24 @@ public final class NursingRecordSigner {
 
             PdfSignatureAppearance appearance = stamper.getSignatureAppearance();
             String signFieldName = resolveSignFieldName(params.getSignFieldTemplate(), row);
+            AcroFields readerAcroFields = reader.getAcroFields();
             boolean hasField = signFieldName != null
-                    && acroFields != null
-                    && acroFields.getFieldItem(signFieldName) != null;
+                    && readerAcroFields != null
+                    && readerAcroFields.getFieldItem(signFieldName) != null;
 
             if (params.isSignVisible()) {
                 if (hasField) {
-                    System.out.println("[visible-sign:field] Using existing field: " + signFieldName);
                     appearance.setVisibleSignature(signFieldName);
+                    System.out.println("[visible-sign:field] " + signFieldName);
                 } else {
-                    float yBase = params.getTableTopY() - (row - 1) * params.getRowHeight();
-                    float x = params.getSignX() >= 0 ? params.getSignX() : params.getNurseX();
-                    float yBottom = yBase + params.getSignYOffset();
-                    float x2 = x + params.getSignWidth();
-                    float y2 = yBottom + params.getSignHeight();
-                    Rectangle rect = new Rectangle(x, yBottom, x2, y2);
+                    float x = nurseX;
+                    float yBottom = yBase - 12f;
+                    float width = 120f;
+                    float height = 18f;
+                    Rectangle rect = new Rectangle(x, yBottom, x + width, yBottom + height);
+                    appearance.setVisibleSignature(rect, pageIndex, signFieldName);
                     System.out.printf("[visible-sign:rect] page=%d rect=[%.1f,%.1f,%.1f,%.1f] field=%s%n",
-                            params.getPageIndex(), x, yBottom, x2, y2, signFieldName);
-                    appearance.setVisibleSignature(rect, params.getPageIndex(), signFieldName);
+                            pageIndex, x, yBottom, x + width, yBottom + height, signFieldName);
                 }
             } else {
                 System.out.println("[visible-sign:none] Invisible signature requested");
