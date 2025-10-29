@@ -2,9 +2,11 @@ package com.demo.pdf;
 
 import com.itextpdf.text.Element;
 import com.itextpdf.text.Font;
+import com.itextpdf.text.Phrase;
 import com.itextpdf.text.Rectangle;
 import com.itextpdf.text.pdf.AcroFields;
 import com.itextpdf.text.pdf.BaseFont;
+import com.itextpdf.text.pdf.ColumnText;
 import com.itextpdf.text.pdf.PdfAnnotation;
 import com.itextpdf.text.pdf.PdfAppearance;
 import com.itextpdf.text.pdf.PdfDictionary;
@@ -32,6 +34,7 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.security.GeneralSecurityException;
 import java.security.KeyStore;
 import java.security.PrivateKey;
 import java.security.Security;
@@ -371,26 +374,9 @@ public final class NursingRecordSigner {
         int pageIndex = params.getPageIndex();
         float tableTopY = params.getTableTopY();
         float rowHeight = params.getRowHeight();
-        float nurseX = params.getNurseX();
         float yBase = tableTopY - (row - 1) * rowHeight;
 
-        boolean sourceCertified = false;
-        PdfReader certificationReader = null;
-        try {
-            certificationReader = new PdfReader(params.getSource());
-            PdfDictionary perms = certificationReader.getCatalog().getAsDict(PdfName.PERMS);
-            sourceCertified = perms != null && perms.getAsDict(PdfName.DOCMDP) != null;
-        } finally {
-            if (certificationReader != null) {
-                certificationReader.close();
-            }
-        }
-
         boolean fallbackActive = shouldFallbackToDrawing(params);
-        String sourceForSigning = params.getSource();
-        if (fallbackActive) {
-            sourceForSigning = applyFallbackDrawing(params, sourceCertified);
-        }
 
         BaseFont cjkFont = resolveBaseFont(params.getCjkFontPath());
         System.out.println("[sign-row] Using font for text fields: " + cjkFont.getPostscriptFontName());
@@ -402,7 +388,7 @@ public final class NursingRecordSigner {
         boolean signDetachedCalled = false;
 
         try {
-            reader = new PdfReader(sourceForSigning);
+            reader = new PdfReader(params.getSource());
             PdfDictionary perms = reader.getCatalog().getAsDict(PdfName.PERMS);
             boolean certified = perms != null && perms.getAsDict(PdfName.DOCMDP) != null;
             os = new FileOutputStream(params.getDestination());
@@ -418,7 +404,19 @@ public final class NursingRecordSigner {
             acroFields.addSubstitutionFont(cjkFont);
             acroFields.setGenerateAppearances(true);
 
-            if (!fallbackActive) {
+            if (fallbackActive) {
+                if (certified) {
+                    applyFallbackAnnotations(stamper, params);
+                } else {
+                    BaseFont fallbackFont;
+                    try {
+                        fallbackFont = resolveFallbackBaseFont(params);
+                    } catch (Exception e) {
+                        throw new IOException("Unable to resolve fallback font", e);
+                    }
+                    drawRowFallback(stamper, params, fallbackFont);
+                }
+            } else {
                 FieldResolution timeField = resolveOrInjectTextField(
                         stamper,
                         acroFields,
@@ -491,20 +489,22 @@ public final class NursingRecordSigner {
             String signFieldName = "sig_row_" + row;
             AcroFields af = reader.getAcroFields();
             boolean hasField = af != null && af.getFieldItem(signFieldName) != null;
+            boolean hasAnySignatures = af != null && !af.getSignatureNames().isEmpty();
 
             if (params.isSignVisible()) {
                 if (hasField) {
                     appearance.setVisibleSignature(signFieldName);
                     System.out.println("[visible-sign:field] " + signFieldName);
                 } else {
-                    float x = nurseX;
-                    float yBottom = yBase - 12f;
-                    float width = 120f;
-                    float height = 18f;
-                    Rectangle rect = new Rectangle(x, yBottom, x + width, yBottom + height);
-                    appearance.setVisibleSignature(rect, pageIndex, signFieldName);
+                    Rectangle signatureRect = computeSignatureRectangle(params, yBase);
+                    appearance.setVisibleSignature(signatureRect, pageIndex, signFieldName);
                     System.out.printf("[visible-sign:rect] page=%d rect=[%.1f,%.1f,%.1f,%.1f] field=%s%n",
-                            pageIndex, x, yBottom, x + width, yBottom + height, signFieldName);
+                            pageIndex,
+                            signatureRect.getLeft(),
+                            signatureRect.getBottom(),
+                            signatureRect.getRight(),
+                            signatureRect.getTop(),
+                            signFieldName);
                 }
             } else {
                 System.out.println("[visible-sign:none] Invisible signature requested");
@@ -520,6 +520,8 @@ public final class NursingRecordSigner {
             if (params.isCertifyP3()) {
                 if (certified) {
                     System.err.println("[sign-row] Document already certified; skipping DocMDP update.");
+                } else if (hasAnySignatures) {
+                    System.err.println("[sign-row] Existing signatures detected; skipping DocMDP update.");
                 } else {
                     appearance.setCertificationLevel(
                             PdfSignatureAppearance.CERTIFIED_FORM_FILLING_AND_ANNOTATIONS);
@@ -539,18 +541,13 @@ public final class NursingRecordSigner {
             PrivateKey privateKey = (PrivateKey) keyStore.getKey(alias, passwordChars);
             Certificate[] chain = keyStore.getCertificateChain(alias);
 
-            ExternalDigest digest = new BouncyCastleDigest();
-            ExternalSignature signature = new PrivateKeySignature(privateKey, "SHA256",
-                    BouncyCastleProvider.PROVIDER_NAME);
-
             TSAClient tsaClient = null;
             if (params.getTsaUrl() != null && !params.getTsaUrl().isBlank()) {
                 tsaClient = new TSAClientBouncyCastle(params.getTsaUrl());
             }
 
             signDetachedCalled = true;
-            MakeSignature.signDetached(appearance, digest, signature, chain, null, null, tsaClient, 0,
-                    MakeSignature.CryptoStandard.CMS);
+            signDetachedWithBC(appearance, privateKey, chain, tsaClient);
         } catch (Exception e) {
             try {
                 if (!signDetachedCalled && stamper != null) {
@@ -585,6 +582,16 @@ public final class NursingRecordSigner {
             } catch (Exception ignore) {
             }
         }
+    }
+
+    private void signDetachedWithBC(PdfSignatureAppearance appearance, PrivateKey privateKey,
+            Certificate[] chain, TSAClient tsaClient)
+            throws GeneralSecurityException, IOException, DocumentException {
+        ExternalDigest digest = new BouncyCastleDigest();
+        ExternalSignature signature = new PrivateKeySignature(privateKey, "SHA256",
+                BouncyCastleProvider.PROVIDER_NAME);
+        MakeSignature.signDetached(appearance, digest, signature, chain, null, null, tsaClient, 0,
+                MakeSignature.CryptoStandard.CMS);
     }
 
     private static String dumpFieldNames(AcroFields af) {
@@ -632,63 +639,16 @@ public final class NursingRecordSigner {
         return false;
     }
 
-    private String applyFallbackDrawing(SignParams params, boolean certified) throws IOException {
-        Path temp = Files.createTempFile("nursing-fallback-row", ".pdf");
-        temp.toFile().deleteOnExit();
-        PdfReader reader = null;
-        FileOutputStream fos = null;
-        try {
-            reader = new PdfReader(params.getSource());
-            fos = new FileOutputStream(temp.toFile());
-            PdfStamper stamper = null;
-            try {
-                stamper = new PdfStamper(reader, fos, '\0', true);
-                if (certified) {
-                    applyFallbackAnnotations(stamper, params);
-                } else {
-                    BaseFont font;
-                    try {
-                        font = resolveFallbackBaseFont(params);
-                    } catch (Exception e) {
-                        throw new IOException("Unable to resolve fallback font", e);
-                    }
-                    drawRowFallback(
-                            stamper,
-                            params.getPageIndex(),
-                            params.getRow(),
-                            params.getTableTopY(),
-                            params.getRowHeight(),
-                            params.getTimeX(),
-                            safe(params.getTimeValue()),
-                            params.getTextX(),
-                            safe(params.getTextValue()),
-                            params.getNurseX(),
-                            safe(params.getNurse()),
-                            font,
-                            params.getFontSize(),
-                            params.getTextMaxWidth()
-                    );
-                }
-            } catch (DocumentException e) {
-                throw new IOException("Failed to apply fallback drawing", e);
-            } finally {
-                if (stamper != null) {
-                    try {
-                        stamper.close();
-                    } catch (DocumentException e) {
-                        throw new IOException("Failed to finalize fallback drawing", e);
-                    }
-                }
-            }
-        } finally {
-            if (fos != null) {
-                fos.close();
-            }
-            if (reader != null) {
-                reader.close();
-            }
+    private Rectangle computeSignatureRectangle(SignParams params, float yBase) {
+        if (params.getSignX() >= 0f) {
+            float signX = params.getSignX();
+            float width = params.getSignWidth() > 0 ? params.getSignWidth() : 1f;
+            float height = params.getSignHeight() > 0 ? params.getSignHeight() : 1f;
+            float bottom = yBase + params.getSignYOffset();
+            return new Rectangle(signX, bottom, signX + width, bottom + height);
         }
-        return temp.toAbsolutePath().toString();
+        Rectangle defaultRect = rectForSignature(params.getRow());
+        return new Rectangle(defaultRect);
     }
 
     private void applyFallbackAnnotations(PdfStamper stamper, SignParams params) throws IOException {
@@ -760,54 +720,63 @@ public final class NursingRecordSigner {
         return resolveBaseFont(params.getCjkFontPath());
     }
 
-    private static void drawRowFallback(
-            PdfStamper stamper,
-            int pageIndex1Based,
-            int row,
-            float tableTopY,
-            float rowHeight,
-            float timeX, String time,
-            float textX, String text,
-            float nurseX, String nurse,
-            BaseFont font, float fontSize,
-            float textMaxWidth
-    ) throws IOException {
+    private void drawRowFallback(PdfStamper stamper, SignParams params, BaseFont font)
+            throws DocumentException {
+        int pageIndex1Based = params.getPageIndex();
         int numberOfPages = stamper.getReader().getNumberOfPages();
         if (pageIndex1Based < 1 || pageIndex1Based > numberOfPages) {
             throw new IllegalArgumentException("Page index " + pageIndex1Based + " out of bounds (1-"
                     + numberOfPages + ")");
         }
+        int row = params.getRow();
         if (row < 1) {
             throw new IllegalArgumentException("Row index must be >= 1");
         }
-        float y = tableTopY - (row - 1) * rowHeight;
-        float lineHeight = fontSize * 1.2f;
-        List<String> wrappedText = wrapText(text, font, fontSize, textMaxWidth);
+        float baselineY = params.getTableTopY() - (row - 1) * params.getRowHeight();
+        float fontSize = params.getFontSize();
         PdfContentByte canvas = stamper.getOverContent(pageIndex1Based);
-        if (time != null && !time.isEmpty()) {
-            showTextLine(canvas, font, fontSize, timeX, y, time);
+        if (canvas == null) {
+            throw new IllegalStateException("Unable to obtain over content for page " + pageIndex1Based);
         }
-        float currentY = y;
-        for (String line : wrappedText) {
-            showTextLine(canvas, font, fontSize, textX, currentY, line);
-            currentY -= lineHeight;
-        }
-        if (nurse != null && !nurse.isEmpty()) {
-            showTextLine(canvas, font, fontSize, nurseX, y, nurse);
-        }
-        System.out.printf("[fallback-draw] page=%d row=%d y=%.2f time=(%.1f,%.1f) text=(%.1f,%.1f) nurse=(%.1f,%.1f)%n",
-                pageIndex1Based, row, y, timeX, y, textX, y, nurseX, y);
-    }
 
-    private static void showTextLine(PdfContentByte canvas, BaseFont font, float fontSize,
-            float x, float y, String value) throws IOException {
-        canvas.beginText();
-        canvas.setFontAndSize(font, fontSize);
-        canvas.setTextMatrix(x, y);
-        if (value != null) {
-            canvas.showText(value);
+        Font drawFont = new Font(font, fontSize);
+        String time = safe(params.getTimeValue());
+        if (!time.isEmpty()) {
+            ColumnText.showTextAligned(canvas, Element.ALIGN_LEFT, new Phrase(time, drawFont),
+                    params.getTimeX(), baselineY, 0f);
         }
-        canvas.endText();
+
+        String nurse = safe(params.getNurse());
+        if (!nurse.isEmpty()) {
+            ColumnText.showTextAligned(canvas, Element.ALIGN_LEFT, new Phrase(nurse, drawFont),
+                    params.getNurseX(), baselineY, 0f);
+        }
+
+        String text = safe(params.getTextValue());
+        if (!text.isEmpty()) {
+            float maxWidth = params.getTextMaxWidth() > 0 ? params.getTextMaxWidth() : 330f;
+            float leading = fontSize * 1.2f;
+            float top = baselineY + leading;
+            float bottom = baselineY - Math.max(params.getRowHeight(), leading * 6f);
+            ColumnText columnText = new ColumnText(canvas);
+            columnText.setAlignment(Element.ALIGN_LEFT);
+            columnText.setSimpleColumn(new Phrase(text, drawFont),
+                    params.getTextX(), bottom, params.getTextX() + maxWidth, top, leading, Element.ALIGN_LEFT);
+            int status = columnText.go();
+            if ((status & ColumnText.NO_MORE_TEXT) == 0) {
+                System.err.printf("[fallback-draw] Text truncated for row %d on page %d%n", row, pageIndex1Based);
+            }
+        }
+
+        System.out.printf("[fallback-draw] page=%d row=%d baseline=%.2f time=(%.1f,%.1f) textX=%.1f nurse=(%.1f,%.1f)%n",
+                pageIndex1Based,
+                row,
+                baselineY,
+                params.getTimeX(),
+                baselineY,
+                params.getTextX(),
+                params.getNurseX(),
+                baselineY);
     }
 
     private static List<String> wrapText(String content, BaseFont font, float fontSize, float maxWidth)
