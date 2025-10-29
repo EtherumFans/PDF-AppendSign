@@ -94,6 +94,46 @@ public class App {
         @CommandLine.Option(names = "--cjk-font", required = false, description = "Optional path to a CJK font")
         private Path cjkFont;
 
+        @CommandLine.Option(names = "--fallback-draw", required = false,
+                description = "Draw text directly onto the PDF when form fields are missing")
+        private boolean fallbackDraw;
+
+        @CommandLine.Option(names = "--page-index", required = false, defaultValue = "1",
+                description = "1-based page index used for fallback drawing")
+        private int pageIndex;
+
+        @CommandLine.Option(names = "--table-top-y", required = false, defaultValue = "650",
+                description = "Top Y coordinate of the first data row for fallback drawing")
+        private float tableTopY;
+
+        @CommandLine.Option(names = "--row-height", required = false, defaultValue = "22",
+                description = "Row height for fallback drawing")
+        private float rowHeight;
+
+        @CommandLine.Option(names = "--time-x", required = false, defaultValue = "90",
+                description = "X coordinate for the time column when fallback drawing")
+        private float timeX;
+
+        @CommandLine.Option(names = "--text-x", required = false, defaultValue = "150",
+                description = "X coordinate for the record text column when fallback drawing")
+        private float textX;
+
+        @CommandLine.Option(names = "--nurse-x", required = false, defaultValue = "500",
+                description = "X coordinate for the nurse column when fallback drawing")
+        private float nurseX;
+
+        @CommandLine.Option(names = "--font-path", required = false,
+                description = "Optional font used for fallback drawing (overrides bundled font)")
+        private Path fontPath;
+
+        @CommandLine.Option(names = "--font-size", required = false, defaultValue = "10",
+                description = "Font size used for fallback drawing")
+        private float fontSize;
+
+        @CommandLine.Option(names = "--text-max-width", required = false, defaultValue = "330",
+                description = "Maximum width for wrapping the record text column when fallback drawing")
+        private float textMaxWidth;
+
         @Override
         public Integer call() throws Exception {
             NursingRecordSigner.SignParams params = new NursingRecordSigner.SignParams();
@@ -111,6 +151,16 @@ public class App {
             params.setTsaUrl(tsaUrl);
             params.setCertifyP3(certifyP3);
             params.setCjkFontPath(cjkFont != null ? cjkFont.toAbsolutePath().toString() : null);
+            params.setFallbackDraw(fallbackDraw);
+            params.setPageIndex(pageIndex);
+            params.setTableTopY(tableTopY);
+            params.setRowHeight(rowHeight);
+            params.setTimeX(timeX);
+            params.setTextX(textX);
+            params.setNurseX(nurseX);
+            params.setFontPath(fontPath != null ? fontPath.toAbsolutePath().toString() : null);
+            params.setFontSize(fontSize);
+            params.setTextMaxWidth(textMaxWidth);
             new NursingRecordSigner().signRow(params);
             System.out.println("Signed row " + row + " -> " + destination.toAbsolutePath());
             return 0;
