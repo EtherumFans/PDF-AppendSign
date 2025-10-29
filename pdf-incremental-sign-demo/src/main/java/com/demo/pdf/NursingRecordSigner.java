@@ -349,7 +349,7 @@ public final class NursingRecordSigner {
             acroFields.setGenerateAppearances(true);
 
             if (!fallbackActive) {
-                String timeField = resolveOrInjectTextField(
+                FieldResolution timeField = resolveOrInjectTextField(
                         stamper,
                         acroFields,
                         row,
@@ -359,7 +359,10 @@ public final class NursingRecordSigner {
                         cjkFont,
                         12f
                 );
-                String textField = resolveOrInjectTextField(
+                if (timeField.created) {
+                    acroFields = stamper.getAcroFields();
+                }
+                FieldResolution textField = resolveOrInjectTextField(
                         stamper,
                         acroFields,
                         row,
@@ -369,7 +372,10 @@ public final class NursingRecordSigner {
                         cjkFont,
                         12f
                 );
-                String nurseField = resolveOrInjectTextField(
+                if (textField.created) {
+                    acroFields = stamper.getAcroFields();
+                }
+                FieldResolution nurseField = resolveOrInjectTextField(
                         stamper,
                         acroFields,
                         row,
@@ -379,36 +385,39 @@ public final class NursingRecordSigner {
                         cjkFont,
                         12f
                 );
-
-                acroFields.setFieldProperty(timeField, "textfont", cjkFont, null);
-                acroFields.setFieldProperty(textField, "textfont", cjkFont, null);
-                acroFields.setFieldProperty(nurseField, "textfont", cjkFont, null);
-                acroFields.setFieldProperty(timeField, "textsize", 12f, null);
-                acroFields.setFieldProperty(textField, "textsize", 12f, null);
-                acroFields.setFieldProperty(nurseField, "textsize", 12f, null);
-
-                if (!acroFields.setField(timeField, safe(params.getTimeValue()))) {
-                    throw new IllegalStateException("Unable to set field: " + timeField
-                            + " fields=" + dumpFieldNames(acroFields));
-                }
-                if (!acroFields.setField(textField, safe(params.getTextValue()))) {
-                    throw new IllegalStateException("Unable to set field: " + textField
-                            + " fields=" + dumpFieldNames(acroFields));
-                }
-                if (!acroFields.setField(nurseField, safe(params.getNurse()))) {
-                    throw new IllegalStateException("Unable to set field: " + nurseField
-                            + " fields=" + dumpFieldNames(acroFields));
+                if (nurseField.created) {
+                    acroFields = stamper.getAcroFields();
                 }
 
-                acroFields.setFieldProperty(timeField, "setfflags", PdfFormField.FF_READ_ONLY, null);
-                acroFields.setFieldProperty(textField, "setfflags", PdfFormField.FF_READ_ONLY, null);
-                acroFields.setFieldProperty(nurseField, "setfflags", PdfFormField.FF_READ_ONLY, null);
-                acroFields.regenerateField(timeField);
-                acroFields.regenerateField(textField);
-                acroFields.regenerateField(nurseField);
+                acroFields.setFieldProperty(timeField.name, "textfont", cjkFont, null);
+                acroFields.setFieldProperty(textField.name, "textfont", cjkFont, null);
+                acroFields.setFieldProperty(nurseField.name, "textfont", cjkFont, null);
+                acroFields.setFieldProperty(timeField.name, "textsize", 12f, null);
+                acroFields.setFieldProperty(textField.name, "textsize", 12f, null);
+                acroFields.setFieldProperty(nurseField.name, "textsize", 12f, null);
+
+                if (!acroFields.setField(timeField.name, safe(params.getTimeValue()))) {
+                    throw new IllegalStateException("Unable to set field: " + timeField.name
+                            + " fields=" + dumpFieldNames(acroFields));
+                }
+                if (!acroFields.setField(textField.name, safe(params.getTextValue()))) {
+                    throw new IllegalStateException("Unable to set field: " + textField.name
+                            + " fields=" + dumpFieldNames(acroFields));
+                }
+                if (!acroFields.setField(nurseField.name, safe(params.getNurse()))) {
+                    throw new IllegalStateException("Unable to set field: " + nurseField.name
+                            + " fields=" + dumpFieldNames(acroFields));
+                }
+
+                acroFields.setFieldProperty(timeField.name, "setfflags", PdfFormField.FF_READ_ONLY, null);
+                acroFields.setFieldProperty(textField.name, "setfflags", PdfFormField.FF_READ_ONLY, null);
+                acroFields.setFieldProperty(nurseField.name, "setfflags", PdfFormField.FF_READ_ONLY, null);
+                acroFields.regenerateField(timeField.name);
+                acroFields.regenerateField(textField.name);
+                acroFields.regenerateField(nurseField.name);
             }
 
-            String signatureField = resolveOrInjectSigField(
+            FieldResolution signatureField = resolveOrInjectSigField(
                     stamper,
                     acroFields,
                     row,
@@ -416,9 +425,12 @@ public final class NursingRecordSigner {
                     sigRect,
                     TARGET_PAGE
             );
+            if (signatureField.created) {
+                acroFields = stamper.getAcroFields();
+            }
 
             PdfSignatureAppearance appearance = stamper.getSignatureAppearance();
-            appearance.setVisibleSignature(signatureField);
+            appearance.setVisibleSignature(signatureField.name);
 
             appearance.setReason(params.getReason());
             appearance.setLocation(params.getLocation());
@@ -719,7 +731,7 @@ public final class NursingRecordSigner {
         return lines;
     }
 
-    private String resolveOrInjectTextField(
+    private FieldResolution resolveOrInjectTextField(
             PdfStamper stamper,
             AcroFields af,
             int row,
@@ -732,7 +744,7 @@ public final class NursingRecordSigner {
         for (String c : candidates) {
             String name = String.format(c, row);
             if (af.getFieldItem(name) != null) {
-                return name;
+                return new FieldResolution(name, false);
             }
         }
         String name = String.format(candidates[0], row);
@@ -748,10 +760,10 @@ public final class NursingRecordSigner {
         af.setFieldProperty(name, "textsize", fontSize, null);
         af.setGenerateAppearances(true);
         af.regenerateField(name);
-        return name;
+        return new FieldResolution(name, true);
     }
 
-    private String resolveOrInjectSigField(
+    private FieldResolution resolveOrInjectSigField(
             PdfStamper stamper,
             AcroFields af,
             int row,
@@ -762,7 +774,7 @@ public final class NursingRecordSigner {
         for (String c : candidates) {
             String name = String.format(c, row);
             if (af.getFieldItem(name) != null) {
-                return name;
+                return new FieldResolution(name, false);
             }
         }
         String name = String.format(candidates[0], row);
@@ -771,7 +783,17 @@ public final class NursingRecordSigner {
         sig.setWidget(rect, PdfAnnotation.HIGHLIGHT_NONE);
         sig.setFlags(PdfAnnotation.FLAGS_PRINT);
         stamper.addAnnotation(sig, page);
-        return name;
+        return new FieldResolution(name, true);
+    }
+
+    private static final class FieldResolution {
+        final String name;
+        final boolean created;
+
+        private FieldResolution(String name, boolean created) {
+            this.name = name;
+            this.created = created;
+        }
     }
 
     private void ensureAcroFormIText5(PdfReader reader, PdfStamper stamper, BaseFont bf) {
