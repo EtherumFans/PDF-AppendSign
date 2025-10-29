@@ -23,7 +23,6 @@ import com.itextpdf.text.pdf.security.TSAClient;
 import com.itextpdf.text.pdf.security.TSAClientBouncyCastle;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 
-import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -41,13 +40,8 @@ import java.util.Calendar;
 import java.util.List;
 import java.util.Objects;
 
-import org.apache.pdfbox.pdmodel.PDDocument;
-import org.apache.pdfbox.pdmodel.PDPage;
-import org.apache.pdfbox.pdmodel.PDPageContentStream;
-import org.apache.pdfbox.pdmodel.PDPageContentStream.AppendMode;
-import org.apache.pdfbox.pdmodel.font.PDFont;
-import org.apache.pdfbox.pdmodel.font.PDType0Font;
-import org.apache.pdfbox.pdmodel.interactive.form.PDAcroForm;
+import com.itextpdf.text.DocumentException;
+import com.itextpdf.text.pdf.PdfContentByte;
 
 /**
  * Helper that fills a nursing record row and signs it incrementally.
@@ -508,8 +502,8 @@ public final class NursingRecordSigner {
         if (!params.isFallbackDraw()) {
             return false;
         }
-        try (PDDocument doc = PDDocument.load(new File(params.getSource()))) {
-            PDAcroForm form = doc.getDocumentCatalog().getAcroForm();
+        try (PdfReader reader = new PdfReader(params.getSource())) {
+            AcroFields form = reader.getAcroFields();
             if (form == null || form.getFields().isEmpty()) {
                 return true;
             }
@@ -527,7 +521,7 @@ public final class NursingRecordSigner {
         }
     }
 
-    private static boolean hasAnyField(PDAcroForm form, String... names) {
+    private static boolean hasAnyField(AcroFields form, String... names) {
         if (form == null) {
             return false;
         }
@@ -542,72 +536,63 @@ public final class NursingRecordSigner {
     private String applyFallbackDrawing(SignParams params) throws IOException {
         Path temp = Files.createTempFile("nursing-fallback-row", ".pdf");
         temp.toFile().deleteOnExit();
-        try (PDDocument doc = PDDocument.load(new File(params.getSource()))) {
-            PDFont font = resolvePdfBoxFont(doc, params);
-            drawRowFallback(
-                    doc,
-                    params.getPageIndex(),
-                    params.getRow(),
-                    params.getTableTopY(),
-                    params.getRowHeight(),
-                    params.getTimeX(),
-                    safe(params.getTimeValue()),
-                    params.getTextX(),
-                    safe(params.getTextValue()),
-                    params.getNurseX(),
-                    safe(params.getNurse()),
-                    font,
-                    params.getFontSize(),
-                    params.getTextMaxWidth()
-            );
-            try (FileOutputStream fos = new FileOutputStream(temp.toFile())) {
-                doc.saveIncremental(fos);
+        try (PdfReader reader = new PdfReader(params.getSource());
+                FileOutputStream fos = new FileOutputStream(temp.toFile())) {
+            PdfStamper stamper = null;
+            try {
+                stamper = new PdfStamper(reader, fos, '\0', true);
+                BaseFont font;
+                try {
+                    font = resolveFallbackBaseFont(params);
+                } catch (Exception e) {
+                    throw new IOException("Unable to resolve fallback font", e);
+                }
+                drawRowFallback(
+                        stamper,
+                        params.getPageIndex(),
+                        params.getRow(),
+                        params.getTableTopY(),
+                        params.getRowHeight(),
+                        params.getTimeX(),
+                        safe(params.getTimeValue()),
+                        params.getTextX(),
+                        safe(params.getTextValue()),
+                        params.getNurseX(),
+                        safe(params.getNurse()),
+                        font,
+                        params.getFontSize(),
+                        params.getTextMaxWidth()
+                );
+            } catch (DocumentException e) {
+                throw new IOException("Failed to apply fallback drawing", e);
+            } finally {
+                if (stamper != null) {
+                    try {
+                        stamper.close();
+                    } catch (DocumentException e) {
+                        throw new IOException("Failed to finalize fallback drawing", e);
+                    }
+                }
             }
         }
         return temp.toAbsolutePath().toString();
     }
 
-    private static PDFont resolvePdfBoxFont(PDDocument doc, SignParams params) throws IOException {
+    private BaseFont resolveFallbackBaseFont(SignParams params) throws Exception {
         String directFont = params.getFontPath();
         if (directFont != null && !directFont.isBlank()) {
             Path path = Paths.get(directFont);
             if (Files.exists(path)) {
-                try (InputStream is = Files.newInputStream(path)) {
-                    return PDType0Font.load(doc, is, true);
-                }
+                return BaseFont.createFont(path.toString(), BaseFont.IDENTITY_H, BaseFont.EMBEDDED);
             } else {
                 System.err.println("[sign-row] Fallback font not found at " + path + ", trying defaults");
             }
         }
-        String cjkFont = params.getCjkFontPath();
-        if (cjkFont != null && !cjkFont.isBlank()) {
-            Path path = Paths.get(cjkFont);
-            if (Files.exists(path)) {
-                try (InputStream is = Files.newInputStream(path)) {
-                    return PDType0Font.load(doc, is, true);
-                }
-            } else {
-                System.err.println("[sign-row] CJK font for fallback drawing not found at " + path
-                        + ", trying bundled font");
-            }
-        }
-        Path bundled = Paths.get("src/main/resources/NotoSansCJKsc-Regular.otf");
-        if (Files.exists(bundled)) {
-            try (InputStream is = Files.newInputStream(bundled)) {
-                return PDType0Font.load(doc, is, true);
-            }
-        }
-        byte[] resource = readResourceFont();
-        if (resource != null) {
-            try (InputStream is = new ByteArrayInputStream(resource)) {
-                return PDType0Font.load(doc, is, true);
-            }
-        }
-        throw new IllegalStateException("Unable to load a font for fallback drawing. Provide --font-path.");
+        return resolveBaseFont(params.getCjkFontPath());
     }
 
     private static void drawRowFallback(
-            PDDocument doc,
+            PdfStamper stamper,
             int pageIndex1Based,
             int row,
             float tableTopY,
@@ -615,49 +600,48 @@ public final class NursingRecordSigner {
             float timeX, String time,
             float textX, String text,
             float nurseX, String nurse,
-            PDFont font, float fontSize,
+            BaseFont font, float fontSize,
             float textMaxWidth
     ) throws IOException {
-        if (pageIndex1Based < 1 || pageIndex1Based > doc.getNumberOfPages()) {
+        int numberOfPages = stamper.getReader().getNumberOfPages();
+        if (pageIndex1Based < 1 || pageIndex1Based > numberOfPages) {
             throw new IllegalArgumentException("Page index " + pageIndex1Based + " out of bounds (1-"
-                    + doc.getNumberOfPages() + ")");
+                    + numberOfPages + ")");
         }
         if (row < 1) {
             throw new IllegalArgumentException("Row index must be >= 1");
         }
-        PDPage page = doc.getPage(pageIndex1Based - 1);
         float y = tableTopY - (row - 1) * rowHeight;
         float lineHeight = fontSize * 1.2f;
         List<String> wrappedText = wrapText(text, font, fontSize, textMaxWidth);
-        try (PDPageContentStream cs = new PDPageContentStream(doc, page, AppendMode.APPEND, true, true)) {
-            if (time != null && !time.isEmpty()) {
-                showTextLine(cs, font, fontSize, timeX, y, time);
-            }
-            float currentY = y;
-            for (String line : wrappedText) {
-                showTextLine(cs, font, fontSize, textX, currentY, line);
-                currentY -= lineHeight;
-            }
-            if (nurse != null && !nurse.isEmpty()) {
-                showTextLine(cs, font, fontSize, nurseX, y, nurse);
-            }
+        PdfContentByte canvas = stamper.getOverContent(pageIndex1Based);
+        if (time != null && !time.isEmpty()) {
+            showTextLine(canvas, font, fontSize, timeX, y, time);
+        }
+        float currentY = y;
+        for (String line : wrappedText) {
+            showTextLine(canvas, font, fontSize, textX, currentY, line);
+            currentY -= lineHeight;
+        }
+        if (nurse != null && !nurse.isEmpty()) {
+            showTextLine(canvas, font, fontSize, nurseX, y, nurse);
         }
         System.out.printf("[fallback-draw] page=%d row=%d y=%.2f time=(%.1f,%.1f) text=(%.1f,%.1f) nurse=(%.1f,%.1f)%n",
                 pageIndex1Based, row, y, timeX, y, textX, y, nurseX, y);
     }
 
-    private static void showTextLine(PDPageContentStream cs, PDFont font, float fontSize,
+    private static void showTextLine(PdfContentByte canvas, BaseFont font, float fontSize,
             float x, float y, String value) throws IOException {
-        cs.beginText();
-        cs.setFont(font, fontSize);
-        cs.newLineAtOffset(x, y);
+        canvas.beginText();
+        canvas.setFontAndSize(font, fontSize);
+        canvas.setTextMatrix(x, y);
         if (value != null) {
-            cs.showText(value);
+            canvas.showText(value);
         }
-        cs.endText();
+        canvas.endText();
     }
 
-    private static List<String> wrapText(String content, PDFont font, float fontSize, float maxWidth)
+    private static List<String> wrapText(String content, BaseFont font, float fontSize, float maxWidth)
             throws IOException {
         List<String> lines = new ArrayList<>();
         if (content == null) {
@@ -683,7 +667,7 @@ public final class NursingRecordSigner {
                         continue;
                     }
                     String candidate = current.length() == 0 ? word : current + " " + word;
-                    float width = font.getStringWidth(candidate) / 1000f * fontSize;
+                    float width = font.getWidthPoint(candidate, fontSize);
                     if (width > maxWidth && current.length() > 0) {
                         lines.add(current.toString());
                         current = new StringBuilder(word);
@@ -701,7 +685,7 @@ public final class NursingRecordSigner {
                 for (int i = 0; i < paragraph.length(); i++) {
                     char ch = paragraph.charAt(i);
                     String candidate = current.toString() + ch;
-                    float width = font.getStringWidth(candidate) / 1000f * fontSize;
+                    float width = font.getWidthPoint(candidate, fontSize);
                     if (width > maxWidth && current.length() > 0) {
                         lines.add(current.toString());
                         current = new StringBuilder();
