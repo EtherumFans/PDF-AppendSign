@@ -502,7 +502,9 @@ public final class NursingRecordSigner {
         if (!params.isFallbackDraw()) {
             return false;
         }
-        try (PdfReader reader = new PdfReader(params.getSource())) {
+        PdfReader reader = null;
+        try {
+            reader = new PdfReader(params.getSource());
             AcroFields form = reader.getAcroFields();
             if (form == null || form.getFields().isEmpty()) {
                 return true;
@@ -518,6 +520,10 @@ public final class NursingRecordSigner {
                     String.format("row%d.nurse", row),
                     String.format("recordNurse_%d", row));
             return !(timeExists && textExists && nurseExists);
+        } finally {
+            if (reader != null) {
+                reader.close();
+            }
         }
     }
 
@@ -536,8 +542,11 @@ public final class NursingRecordSigner {
     private String applyFallbackDrawing(SignParams params) throws IOException {
         Path temp = Files.createTempFile("nursing-fallback-row", ".pdf");
         temp.toFile().deleteOnExit();
-        try (PdfReader reader = new PdfReader(params.getSource());
-                FileOutputStream fos = new FileOutputStream(temp.toFile())) {
+        PdfReader reader = null;
+        FileOutputStream fos = null;
+        try {
+            reader = new PdfReader(params.getSource());
+            fos = new FileOutputStream(temp.toFile());
             PdfStamper stamper = null;
             try {
                 stamper = new PdfStamper(reader, fos, '\0', true);
@@ -573,6 +582,13 @@ public final class NursingRecordSigner {
                         throw new IOException("Failed to finalize fallback drawing", e);
                     }
                 }
+            }
+        } finally {
+            if (fos != null) {
+                fos.close();
+            }
+            if (reader != null) {
+                reader.close();
             }
         }
         return temp.toAbsolutePath().toString();
