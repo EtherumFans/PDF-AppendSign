@@ -517,15 +517,13 @@ public final class NursingRecordSigner {
             appearance.setRenderingMode(PdfSignatureAppearance.RenderingMode.DESCRIPTION);
             appearance.setLayer2Font(appearanceFont);
             appearance.setLayer2Text(buildLayer2Text(params));
-            if (certified) {
-                if (params.isCertifyP3()) {
+            if (params.isCertifyP3()) {
+                if (certified) {
                     System.err.println("[sign-row] Document already certified; skipping DocMDP update.");
+                } else {
+                    appearance.setCertificationLevel(
+                            PdfSignatureAppearance.CERTIFIED_FORM_FILLING_AND_ANNOTATIONS);
                 }
-                appearance.setCertificationLevel(PdfSignatureAppearance.NOT_CERTIFIED);
-            } else if (params.isCertifyP3()) {
-                appearance.setCertificationLevel(PdfSignatureAppearance.CERTIFIED_FORM_FILLING_AND_ANNOTATIONS);
-            } else {
-                appearance.setCertificationLevel(PdfSignatureAppearance.NOT_CERTIFIED);
             }
 
             if (Security.getProvider(BouncyCastleProvider.PROVIDER_NAME) == null) {
