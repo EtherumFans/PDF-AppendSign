@@ -23,6 +23,7 @@ import com.itextpdf.text.pdf.security.TSAClient;
 import com.itextpdf.text.pdf.security.TSAClientBouncyCastle;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -35,8 +36,18 @@ import java.security.KeyStore;
 import java.security.PrivateKey;
 import java.security.Security;
 import java.security.cert.Certificate;
+import java.util.ArrayList;
 import java.util.Calendar;
+import java.util.List;
 import java.util.Objects;
+
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.PDPageContentStream.AppendMode;
+import org.apache.pdfbox.pdmodel.font.PDFont;
+import org.apache.pdfbox.pdmodel.font.PDType0Font;
+import org.apache.pdfbox.pdmodel.interactive.form.PDAcroForm;
 
 /**
  * Helper that fills a nursing record row and signs it incrementally.
@@ -80,6 +91,16 @@ public final class NursingRecordSigner {
         private String tsaUrl;
         private boolean certifyP3;
         private String cjkFontPath;
+        private boolean fallbackDraw;
+        private int pageIndex = 1;
+        private float tableTopY = 650f;
+        private float rowHeight = 22f;
+        private float timeX = 90f;
+        private float textX = 150f;
+        private float nurseX = 500f;
+        private String fontPath;
+        private float fontSize = 10f;
+        private float textMaxWidth = 330f;
 
         public String getSource() {
             return source;
@@ -198,6 +219,86 @@ public final class NursingRecordSigner {
         public void setCjkFontPath(String cjkFontPath) {
             this.cjkFontPath = cjkFontPath;
         }
+
+        public boolean isFallbackDraw() {
+            return fallbackDraw;
+        }
+
+        public void setFallbackDraw(boolean fallbackDraw) {
+            this.fallbackDraw = fallbackDraw;
+        }
+
+        public int getPageIndex() {
+            return pageIndex;
+        }
+
+        public void setPageIndex(int pageIndex) {
+            this.pageIndex = pageIndex;
+        }
+
+        public float getTableTopY() {
+            return tableTopY;
+        }
+
+        public void setTableTopY(float tableTopY) {
+            this.tableTopY = tableTopY;
+        }
+
+        public float getRowHeight() {
+            return rowHeight;
+        }
+
+        public void setRowHeight(float rowHeight) {
+            this.rowHeight = rowHeight;
+        }
+
+        public float getTimeX() {
+            return timeX;
+        }
+
+        public void setTimeX(float timeX) {
+            this.timeX = timeX;
+        }
+
+        public float getTextX() {
+            return textX;
+        }
+
+        public void setTextX(float textX) {
+            this.textX = textX;
+        }
+
+        public float getNurseX() {
+            return nurseX;
+        }
+
+        public void setNurseX(float nurseX) {
+            this.nurseX = nurseX;
+        }
+
+        public String getFontPath() {
+            return fontPath;
+        }
+
+        public void setFontPath(String fontPath) {
+            this.fontPath = fontPath;
+        }
+
+        public float getFontSize() {
+            return fontSize;
+        }
+
+        public void setFontSize(float fontSize) {
+            this.fontSize = fontSize;
+        }
+
+        public float getTextMaxWidth() {
+            return textMaxWidth;
+        }
+
+        public void setTextMaxWidth(float textMaxWidth) {
+            this.textMaxWidth = textMaxWidth;
+        }
     }
 
     public NursingRecordSigner() {
@@ -221,6 +322,12 @@ public final class NursingRecordSigner {
         Rectangle nurseRect = rectForNurse(row);
         Rectangle sigRect = rectForSignature(row);
 
+        boolean fallbackActive = shouldFallbackToDrawing(params);
+        String sourceForSigning = params.getSource();
+        if (fallbackActive) {
+            sourceForSigning = applyFallbackDrawing(params);
+        }
+
         BaseFont cjkFont = resolveBaseFont(params.getCjkFontPath());
         System.out.println("[sign-row] Using font for text fields: " + cjkFont.getPostscriptFontName());
         Font appearanceFont = new Font(cjkFont, 10f);
@@ -231,7 +338,7 @@ public final class NursingRecordSigner {
         boolean signDetachedCalled = false;
 
         try {
-            reader = new PdfReader(params.getSource());
+            reader = new PdfReader(sourceForSigning);
             os = new FileOutputStream(params.getDestination());
 
             Rectangle pageRect = requirePageRectangle(reader, TARGET_PAGE);
@@ -247,63 +354,65 @@ public final class NursingRecordSigner {
             acroFields.addSubstitutionFont(cjkFont);
             acroFields.setGenerateAppearances(true);
 
-            String timeField = resolveOrInjectTextField(
-                    stamper,
-                    acroFields,
-                    row,
-                    new String[]{"row%d.time", "recordTime_%d"},
-                    timeRect,
-                    TARGET_PAGE,
-                    cjkFont,
-                    12f
-            );
-            String textField = resolveOrInjectTextField(
-                    stamper,
-                    acroFields,
-                    row,
-                    new String[]{"row%d.text", "recordText_%d"},
-                    textRect,
-                    TARGET_PAGE,
-                    cjkFont,
-                    12f
-            );
-            String nurseField = resolveOrInjectTextField(
-                    stamper,
-                    acroFields,
-                    row,
-                    new String[]{"row%d.nurse", "recordNurse_%d"},
-                    nurseRect,
-                    TARGET_PAGE,
-                    cjkFont,
-                    12f
-            );
+            if (!fallbackActive) {
+                String timeField = resolveOrInjectTextField(
+                        stamper,
+                        acroFields,
+                        row,
+                        new String[]{"row%d.time", "recordTime_%d"},
+                        timeRect,
+                        TARGET_PAGE,
+                        cjkFont,
+                        12f
+                );
+                String textField = resolveOrInjectTextField(
+                        stamper,
+                        acroFields,
+                        row,
+                        new String[]{"row%d.text", "recordText_%d"},
+                        textRect,
+                        TARGET_PAGE,
+                        cjkFont,
+                        12f
+                );
+                String nurseField = resolveOrInjectTextField(
+                        stamper,
+                        acroFields,
+                        row,
+                        new String[]{"row%d.nurse", "recordNurse_%d"},
+                        nurseRect,
+                        TARGET_PAGE,
+                        cjkFont,
+                        12f
+                );
 
-            acroFields.setFieldProperty(timeField, "textfont", cjkFont, null);
-            acroFields.setFieldProperty(textField, "textfont", cjkFont, null);
-            acroFields.setFieldProperty(nurseField, "textfont", cjkFont, null);
-            acroFields.setFieldProperty(timeField, "textsize", 12f, null);
-            acroFields.setFieldProperty(textField, "textsize", 12f, null);
-            acroFields.setFieldProperty(nurseField, "textsize", 12f, null);
+                acroFields.setFieldProperty(timeField, "textfont", cjkFont, null);
+                acroFields.setFieldProperty(textField, "textfont", cjkFont, null);
+                acroFields.setFieldProperty(nurseField, "textfont", cjkFont, null);
+                acroFields.setFieldProperty(timeField, "textsize", 12f, null);
+                acroFields.setFieldProperty(textField, "textsize", 12f, null);
+                acroFields.setFieldProperty(nurseField, "textsize", 12f, null);
 
-            if (!acroFields.setField(timeField, safe(params.getTimeValue()))) {
-                throw new IllegalStateException("Unable to set field: " + timeField
-                        + " fields=" + dumpFieldNames(acroFields));
-            }
-            if (!acroFields.setField(textField, safe(params.getTextValue()))) {
-                throw new IllegalStateException("Unable to set field: " + textField
-                        + " fields=" + dumpFieldNames(acroFields));
-            }
-            if (!acroFields.setField(nurseField, safe(params.getNurse()))) {
-                throw new IllegalStateException("Unable to set field: " + nurseField
-                        + " fields=" + dumpFieldNames(acroFields));
-            }
+                if (!acroFields.setField(timeField, safe(params.getTimeValue()))) {
+                    throw new IllegalStateException("Unable to set field: " + timeField
+                            + " fields=" + dumpFieldNames(acroFields));
+                }
+                if (!acroFields.setField(textField, safe(params.getTextValue()))) {
+                    throw new IllegalStateException("Unable to set field: " + textField
+                            + " fields=" + dumpFieldNames(acroFields));
+                }
+                if (!acroFields.setField(nurseField, safe(params.getNurse()))) {
+                    throw new IllegalStateException("Unable to set field: " + nurseField
+                            + " fields=" + dumpFieldNames(acroFields));
+                }
 
-            acroFields.setFieldProperty(timeField, "setfflags", PdfFormField.FF_READ_ONLY, null);
-            acroFields.setFieldProperty(textField, "setfflags", PdfFormField.FF_READ_ONLY, null);
-            acroFields.setFieldProperty(nurseField, "setfflags", PdfFormField.FF_READ_ONLY, null);
-            acroFields.regenerateField(timeField);
-            acroFields.regenerateField(textField);
-            acroFields.regenerateField(nurseField);
+                acroFields.setFieldProperty(timeField, "setfflags", PdfFormField.FF_READ_ONLY, null);
+                acroFields.setFieldProperty(textField, "setfflags", PdfFormField.FF_READ_ONLY, null);
+                acroFields.setFieldProperty(nurseField, "setfflags", PdfFormField.FF_READ_ONLY, null);
+                acroFields.regenerateField(timeField);
+                acroFields.regenerateField(textField);
+                acroFields.regenerateField(nurseField);
+            }
 
             String signatureField = resolveOrInjectSigField(
                     stamper,
@@ -393,6 +502,221 @@ public final class NursingRecordSigner {
 
     private static String dumpFieldNames(AcroFields af) {
         return String.valueOf(af.getFields().keySet());
+    }
+
+    private boolean shouldFallbackToDrawing(SignParams params) throws IOException {
+        if (!params.isFallbackDraw()) {
+            return false;
+        }
+        try (PDDocument doc = PDDocument.load(new File(params.getSource()))) {
+            PDAcroForm form = doc.getDocumentCatalog().getAcroForm();
+            if (form == null || form.getFields().isEmpty()) {
+                return true;
+            }
+            int row = params.getRow();
+            boolean timeExists = hasAnyField(form,
+                    String.format("row%d.time", row),
+                    String.format("recordTime_%d", row));
+            boolean textExists = hasAnyField(form,
+                    String.format("row%d.text", row),
+                    String.format("recordText_%d", row));
+            boolean nurseExists = hasAnyField(form,
+                    String.format("row%d.nurse", row),
+                    String.format("recordNurse_%d", row));
+            return !(timeExists && textExists && nurseExists);
+        }
+    }
+
+    private static boolean hasAnyField(PDAcroForm form, String... names) {
+        if (form == null) {
+            return false;
+        }
+        for (String name : names) {
+            if (name != null && form.getField(name) != null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String applyFallbackDrawing(SignParams params) throws IOException {
+        Path temp = Files.createTempFile("nursing-fallback-row", ".pdf");
+        temp.toFile().deleteOnExit();
+        try (PDDocument doc = PDDocument.load(new File(params.getSource()))) {
+            PDFont font = resolvePdfBoxFont(doc, params);
+            drawRowFallback(
+                    doc,
+                    params.getPageIndex(),
+                    params.getRow(),
+                    params.getTableTopY(),
+                    params.getRowHeight(),
+                    params.getTimeX(),
+                    safe(params.getTimeValue()),
+                    params.getTextX(),
+                    safe(params.getTextValue()),
+                    params.getNurseX(),
+                    safe(params.getNurse()),
+                    font,
+                    params.getFontSize(),
+                    params.getTextMaxWidth()
+            );
+            try (FileOutputStream fos = new FileOutputStream(temp.toFile())) {
+                doc.saveIncremental(fos);
+            }
+        }
+        return temp.toAbsolutePath().toString();
+    }
+
+    private static PDFont resolvePdfBoxFont(PDDocument doc, SignParams params) throws IOException {
+        String directFont = params.getFontPath();
+        if (directFont != null && !directFont.isBlank()) {
+            Path path = Paths.get(directFont);
+            if (Files.exists(path)) {
+                try (InputStream is = Files.newInputStream(path)) {
+                    return PDType0Font.load(doc, is, true);
+                }
+            } else {
+                System.err.println("[sign-row] Fallback font not found at " + path + ", trying defaults");
+            }
+        }
+        String cjkFont = params.getCjkFontPath();
+        if (cjkFont != null && !cjkFont.isBlank()) {
+            Path path = Paths.get(cjkFont);
+            if (Files.exists(path)) {
+                try (InputStream is = Files.newInputStream(path)) {
+                    return PDType0Font.load(doc, is, true);
+                }
+            } else {
+                System.err.println("[sign-row] CJK font for fallback drawing not found at " + path
+                        + ", trying bundled font");
+            }
+        }
+        Path bundled = Paths.get("src/main/resources/NotoSansCJKsc-Regular.otf");
+        if (Files.exists(bundled)) {
+            try (InputStream is = Files.newInputStream(bundled)) {
+                return PDType0Font.load(doc, is, true);
+            }
+        }
+        byte[] resource = readResourceFont();
+        if (resource != null) {
+            try (InputStream is = new ByteArrayInputStream(resource)) {
+                return PDType0Font.load(doc, is, true);
+            }
+        }
+        throw new IllegalStateException("Unable to load a font for fallback drawing. Provide --font-path.");
+    }
+
+    private static void drawRowFallback(
+            PDDocument doc,
+            int pageIndex1Based,
+            int row,
+            float tableTopY,
+            float rowHeight,
+            float timeX, String time,
+            float textX, String text,
+            float nurseX, String nurse,
+            PDFont font, float fontSize,
+            float textMaxWidth
+    ) throws IOException {
+        if (pageIndex1Based < 1 || pageIndex1Based > doc.getNumberOfPages()) {
+            throw new IllegalArgumentException("Page index " + pageIndex1Based + " out of bounds (1-"
+                    + doc.getNumberOfPages() + ")");
+        }
+        if (row < 1) {
+            throw new IllegalArgumentException("Row index must be >= 1");
+        }
+        PDPage page = doc.getPage(pageIndex1Based - 1);
+        float y = tableTopY - (row - 1) * rowHeight;
+        float lineHeight = fontSize * 1.2f;
+        List<String> wrappedText = wrapText(text, font, fontSize, textMaxWidth);
+        try (PDPageContentStream cs = new PDPageContentStream(doc, page, AppendMode.APPEND, true, true)) {
+            if (time != null && !time.isEmpty()) {
+                showTextLine(cs, font, fontSize, timeX, y, time);
+            }
+            float currentY = y;
+            for (String line : wrappedText) {
+                showTextLine(cs, font, fontSize, textX, currentY, line);
+                currentY -= lineHeight;
+            }
+            if (nurse != null && !nurse.isEmpty()) {
+                showTextLine(cs, font, fontSize, nurseX, y, nurse);
+            }
+        }
+        System.out.printf("[fallback-draw] page=%d row=%d y=%.2f time=(%.1f,%.1f) text=(%.1f,%.1f) nurse=(%.1f,%.1f)%n",
+                pageIndex1Based, row, y, timeX, y, textX, y, nurseX, y);
+    }
+
+    private static void showTextLine(PDPageContentStream cs, PDFont font, float fontSize,
+            float x, float y, String value) throws IOException {
+        cs.beginText();
+        cs.setFont(font, fontSize);
+        cs.newLineAtOffset(x, y);
+        if (value != null) {
+            cs.showText(value);
+        }
+        cs.endText();
+    }
+
+    private static List<String> wrapText(String content, PDFont font, float fontSize, float maxWidth)
+            throws IOException {
+        List<String> lines = new ArrayList<>();
+        if (content == null) {
+            lines.add("");
+            return lines;
+        }
+        String normalized = content.replace("\r", "");
+        String[] paragraphs = normalized.split("\n", -1);
+        for (String paragraph : paragraphs) {
+            if (paragraph.isEmpty()) {
+                lines.add("");
+                continue;
+            }
+            if (maxWidth <= 0) {
+                lines.add(paragraph);
+                continue;
+            }
+            if (paragraph.matches(".*\\s+.*")) {
+                StringBuilder current = new StringBuilder();
+                String[] words = paragraph.split("\\s+");
+                for (String word : words) {
+                    if (word.isEmpty()) {
+                        continue;
+                    }
+                    String candidate = current.length() == 0 ? word : current + " " + word;
+                    float width = font.getStringWidth(candidate) / 1000f * fontSize;
+                    if (width > maxWidth && current.length() > 0) {
+                        lines.add(current.toString());
+                        current = new StringBuilder(word);
+                    } else {
+                        current = new StringBuilder(candidate);
+                    }
+                }
+                if (current.length() > 0) {
+                    lines.add(current.toString());
+                } else {
+                    lines.add("");
+                }
+            } else {
+                StringBuilder current = new StringBuilder();
+                for (int i = 0; i < paragraph.length(); i++) {
+                    char ch = paragraph.charAt(i);
+                    String candidate = current.toString() + ch;
+                    float width = font.getStringWidth(candidate) / 1000f * fontSize;
+                    if (width > maxWidth && current.length() > 0) {
+                        lines.add(current.toString());
+                        current = new StringBuilder();
+                        current.append(ch);
+                    } else {
+                        current.append(ch);
+                    }
+                }
+                lines.add(current.toString());
+            }
+        }
+        if (lines.isEmpty()) {
+            lines.add("");
+        }
+        return lines;
     }
 
     private String resolveOrInjectTextField(
