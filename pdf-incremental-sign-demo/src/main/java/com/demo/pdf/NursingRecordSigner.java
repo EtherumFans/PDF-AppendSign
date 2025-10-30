@@ -8,6 +8,7 @@ import com.itextpdf.text.pdf.AcroFields;
 import com.itextpdf.text.pdf.BaseFont;
 import com.itextpdf.text.pdf.ColumnText;
 import com.itextpdf.text.pdf.PdfAnnotation;
+import com.itextpdf.text.pdf.PdfArray;
 import com.itextpdf.text.pdf.PdfDictionary;
 import com.itextpdf.text.pdf.PdfFormField;
 import com.itextpdf.text.pdf.PdfName;
@@ -28,6 +29,7 @@ import org.slf4j.LoggerFactory;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 
 import java.io.ByteArrayOutputStream;
+import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -88,6 +90,8 @@ public final class NursingRecordSigner {
         private String location = "Ward";
         private String contact = "nurse@example.com";
         private String tsaUrl;
+        private boolean certifyP1;
+        private boolean certifyP2;
         private boolean certifyP3;
         private String cjkFontPath;
         private boolean fallbackDraw;
@@ -207,6 +211,22 @@ public final class NursingRecordSigner {
 
         public void setTsaUrl(String tsaUrl) {
             this.tsaUrl = tsaUrl;
+        }
+
+        public boolean isCertifyP1() {
+            return certifyP1;
+        }
+
+        public void setCertifyP1(boolean certifyP1) {
+            this.certifyP1 = certifyP1;
+        }
+
+        public boolean isCertifyP2() {
+            return certifyP2;
+        }
+
+        public void setCertifyP2(boolean certifyP2) {
+            this.certifyP2 = certifyP2;
         }
 
         public boolean isCertifyP3() {
@@ -397,13 +417,17 @@ public final class NursingRecordSigner {
         log.info("[sign-row] Using font for text fields: {}", cjkFont.getPostscriptFontName());
         Font appearanceFont = new Font(cjkFont, 10f);
 
+        File prevFile = new File(params.getSource());
+        File destFile = new File(params.getDestination());
         PdfReader reader = null;
         FileOutputStream os = null;
         PdfStamper stamper = null;
         boolean signDetachedCalled = false;
+        boolean signCompleted = false;
 
         try {
             reader = new PdfReader(params.getSource());
+            logPreSigningState(reader, prevFile);
             os = new FileOutputStream(params.getDestination());
 
             Rectangle pageRect = requirePageRectangle(reader, pageIndex);
@@ -416,7 +440,6 @@ public final class NursingRecordSigner {
             AcroFields acroFields = stamper.getAcroFields();
             ensureAcroFormIText5(reader, stamper, cjkFont);
             acroFields.addSubstitutionFont(cjkFont);
-            acroFields.setGenerateAppearances(true);
 
             FieldResolution timeField = resolveOrInjectTextField(
                     stamper,
@@ -491,24 +514,19 @@ public final class NursingRecordSigner {
             boolean hasField = af.getFieldItem(signFieldName) != null;
             boolean hasAnySignatures = !af.getSignatureNames().isEmpty();
 
-            boolean doCertify = params.isCertifyP3();
-            if (hasAnySignatures && params.isCertifyP3()) {
-                log.warn("[sign-row] Document already has signatures. Ignoring certifyP3 for subsequent signatures.");
-                doCertify = false;
-            }
-
-            if (doCertify) {
-                int level = PdfSignatureAppearance.CERTIFIED_FORM_FILLING_AND_ANNOTATIONS;
-                log.info("[sign-row] Applying DocMDP by flag: level={}", level);
-                appearance.setCertificationLevel(level);
+            Integer certificationLevel = resolveCertificationLevel(params, hasAnySignatures);
+            if (certificationLevel != null) {
+                log.info("[sign-row] Applying DocMDP by flag: level={}", certificationLevel);
+                appearance.setCertificationLevel(certificationLevel);
             } else {
                 log.info("[sign-row] Approval signature (no DocMDP).");
             }
 
+            String docMdpLog = certificationLevel == null ? "none" : ("level=" + certificationLevel);
             if (params.isSignVisible()) {
                 if (hasField) {
-                    log.info("[sign-row] visible-sign field='{}' page={} rect=n/a certifyP3={}",
-                            signFieldName, pageIndex, params.isCertifyP3());
+                    log.info("[sign-row] visible-sign field='{}' page={} rect=n/a DocMDP={}",
+                            signFieldName, pageIndex, docMdpLog);
                     appearance.setVisibleSignature(signFieldName);
                 } else {
                     Rectangle signatureRect = computeSignatureRectangle(params, yBase);
@@ -516,14 +534,14 @@ public final class NursingRecordSigner {
                     float signY = signatureRect.getBottom();
                     float signW = signatureRect.getWidth();
                     float signH = signatureRect.getHeight();
-                    log.info("[sign-row] visible-sign field='{}' page={} rect=[{},{} ,{} ,{}] certifyP3={}",
+                    log.info("[sign-row] visible-sign field='{}' page={} rect=[{},{} ,{} ,{}] DocMDP={}",
                             signFieldName, pageIndex, signX, signY, signX + signW, signY + signH,
-                            params.isCertifyP3());
+                            docMdpLog);
                     appearance.setVisibleSignature(signatureRect, pageIndex, signFieldName);
                 }
             } else {
-                log.info("[sign-row] visible-sign field='{}' page={} rect=n/a certifyP3={} (invisible)",
-                        signFieldName, pageIndex, params.isCertifyP3());
+                log.info("[sign-row] visible-sign field='{}' page={} rect=n/a DocMDP={} (invisible)",
+                        signFieldName, pageIndex, docMdpLog);
                 appearance.setVisibleSignature(signFieldName);
             }
 
@@ -540,8 +558,7 @@ public final class NursingRecordSigner {
 
             signDetachedCalled = true;
             signDetachedWithBC(appearance, keyMaterial.privateKey, keyMaterial.chain, tsaClient);
-
-            dumpSignatures("AFTER", params.getDestination());
+            signCompleted = true;
         } catch (Exception e) {
             try {
                 if (!signDetachedCalled && stamper != null) {
@@ -576,6 +593,19 @@ public final class NursingRecordSigner {
             } catch (Exception ignore) {
             }
         }
+
+        if (signCompleted) {
+            try {
+                long prefixLen = computePrevRevisionLength(prevFile, destFile);
+                log.info("[sign-row] prev='{}' ({}B) curr='{}' ({}B) prefixLen={}B", prevFile.getAbsolutePath(),
+                        prevFile.exists() ? prevFile.length() : -1,
+                        destFile.getAbsolutePath(), destFile.exists() ? destFile.length() : -1, prefixLen);
+                assertPrefixUnchanged(prevFile, destFile, prefixLen, log);
+            } catch (IOException ioException) {
+                throw new IllegalStateException("Failed to validate incremental prefix", ioException);
+            }
+            dumpSignatures("AFTER", params.getDestination());
+        }
     }
 
     private void signRowWithFallbackDrawing(SignParams params) throws Exception {
@@ -588,23 +618,29 @@ public final class NursingRecordSigner {
 
         dumpSignatures("BEFORE", params.getSource());
 
+        File prevFile = new File(params.getSource());
+        File destFile = new File(params.getDestination());
         PdfReader reader = null;
         FileOutputStream os = null;
         PdfStamper stamper = null;
         boolean signDetachedCalled = false;
         boolean docmdpPresent = false;
+        boolean signCompleted = false;
         try {
             reader = new PdfReader(params.getSource());
             PdfDictionary perms = reader.getCatalog().getAsDict(PdfName.PERMS);
             docmdpPresent = perms != null && perms.getAsDict(PdfName.DOCMDP) != null;
-            if (docmdpPresent) {
-                log.error("[sign-row:fallback] Document is certified (DocMDP). Aborting fallback drawing.");
+            Integer docMdpPerm = getDocMdpPermission(reader);
+            if (docmdpPresent && docMdpPerm != null && (docMdpPerm == 1 || docMdpPerm == 2)) {
+                log.error("[sign-row:fallback] Document is certified DocMDP P={} . Aborting fallback drawing.", docMdpPerm);
                 throw new IllegalStateException(
                         "This document is certified (DocMDP). Fallback drawing modifies page content and is not allowed. "
                                 + "Either sign without certification until the last round, or use pre-created form fields.");
             }
             AcroFields af = reader.getAcroFields();
             boolean hasAnySignatures = !af.getSignatureNames().isEmpty();
+
+            logPreSigningState(reader, prevFile);
 
             int pageIndex = params.getPageIndex();
             requirePageRectangle(reader, pageIndex);
@@ -632,35 +668,28 @@ public final class NursingRecordSigner {
             appearance.setLayer2Font(signatureFont);
             appearance.setLayer2Text(buildLayer2Text(params));
 
-            boolean doCertify = params.isCertifyP3();
-            if (hasAnySignatures && params.isCertifyP3()) {
-                log.warn("[sign-row] Document already has signatures. Ignoring certifyP3 for subsequent signatures.");
-                doCertify = false;
-            }
-
-            if (doCertify) {
-                int level = PdfSignatureAppearance.CERTIFIED_FORM_FILLING_AND_ANNOTATIONS;
-                log.info("[sign-row] Applying DocMDP by flag: level={}", level);
-                appearance.setCertificationLevel(level);
+            Integer certificationLevel = resolveCertificationLevel(params, hasAnySignatures);
+            if (certificationLevel != null) {
+                log.info("[sign-row] Applying DocMDP by flag: level={}", certificationLevel);
+                appearance.setCertificationLevel(certificationLevel);
             } else {
                 log.info("[sign-row] Approval signature (no DocMDP).");
             }
 
             float rowBaselineY = params.getTableTopY() - (params.getRow() - 1) * params.getRowHeight();
-            boolean certified = docmdpPresent;
-            if (certified) {
-                // 禁用：新增注释在 DocMDP=P=2 下不被允许，会让前一修订签名失效
-                // applyFallbackAnnotations(stamper, pageIndex, rowBaselineY, /* ... */);
+            if (docmdpPresent && docMdpPerm != null && docMdpPerm == 3) {
+                log.info("[sign-row:fallback] Existing DocMDP P=3 allows annotations and drawing.");
             }
             drawRowFallback(stamper, params, drawFont);
 
             float yBase = rowBaselineY;
             String signFieldName = resolveSignatureFieldName(params);
             boolean hasField = af.getFieldItem(signFieldName) != null;
+            String docMdpLog = certificationLevel == null ? "none" : ("level=" + certificationLevel);
             if (params.isSignVisible()) {
                 if (hasField) {
-                    log.info("[sign-row] visible-sign field='{}' page={} rect=n/a certifyP3={}",
-                            signFieldName, pageIndex, params.isCertifyP3());
+                    log.info("[sign-row] visible-sign field='{}' page={} rect=n/a DocMDP={} ",
+                            signFieldName, pageIndex, docMdpLog);
                     appearance.setVisibleSignature(signFieldName);
                 } else {
                     Rectangle signatureRect = computeSignatureRectangle(params, yBase);
@@ -668,14 +697,14 @@ public final class NursingRecordSigner {
                     float signY = signatureRect.getBottom();
                     float signW = signatureRect.getWidth();
                     float signH = signatureRect.getHeight();
-                    log.info("[sign-row] visible-sign field='{}' page={} rect=[{},{} ,{} ,{}] certifyP3={}",
+                    log.info("[sign-row] visible-sign field='{}' page={} rect=[{},{} ,{} ,{}] DocMDP={}",
                             signFieldName, pageIndex, signX, signY, signX + signW, signY + signH,
-                            params.isCertifyP3());
+                            docMdpLog);
                     appearance.setVisibleSignature(signatureRect, pageIndex, signFieldName);
                 }
             } else {
-                log.info("[sign-row] visible-sign field='{}' page={} rect=n/a certifyP3={} (invisible)",
-                        signFieldName, pageIndex, params.isCertifyP3());
+                log.info("[sign-row] visible-sign field='{}' page={} rect=n/a DocMDP={} (invisible)",
+                        signFieldName, pageIndex, docMdpLog);
                 appearance.setVisibleSignature(signFieldName);
             }
 
@@ -684,8 +713,7 @@ public final class NursingRecordSigner {
 
             signDetachedCalled = true;
             signDetachedWithBC(appearance, keyMaterial.privateKey, keyMaterial.chain, tsaClient);
-
-            dumpSignatures("AFTER", params.getDestination());
+            signCompleted = true;
         } catch (Exception e) {
             try {
                 if (!signDetachedCalled && stamper != null) {
@@ -719,6 +747,19 @@ public final class NursingRecordSigner {
                 }
             } catch (Exception ignore) {
             }
+        }
+
+        if (signCompleted) {
+            try {
+                long prefixLen = computePrevRevisionLength(prevFile, destFile);
+                log.info("[sign-row:fallback] prev='{}' ({}B) curr='{}' ({}B) prefixLen={}B", prevFile.getAbsolutePath(),
+                        prevFile.exists() ? prevFile.length() : -1,
+                        destFile.getAbsolutePath(), destFile.exists() ? destFile.length() : -1, prefixLen);
+                assertPrefixUnchanged(prevFile, destFile, prefixLen, log);
+            } catch (IOException ioException) {
+                throw new IllegalStateException("Failed to validate incremental prefix", ioException);
+            }
+            dumpSignatures("AFTER", params.getDestination());
         }
     }
 
@@ -892,7 +933,6 @@ public final class NursingRecordSigner {
         stamper.addAnnotation(f, page);
         af.setFieldProperty(name, "textfont", bf, null);
         af.setFieldProperty(name, "textsize", fontSize, null);
-        af.setGenerateAppearances(true);
         af.regenerateField(name);
         return new FieldResolution(name, true);
     }
@@ -998,6 +1038,129 @@ public final class NursingRecordSigner {
         if (tp == null) return null;
         com.itextpdf.text.pdf.PdfNumber p = tp.getAsNumber(com.itextpdf.text.pdf.PdfName.P);
         return (p == null) ? null : p.intValue();
+    }
+
+    private Integer resolveCertificationLevel(SignParams params, boolean hasAnySignatures) {
+        boolean p1 = params.isCertifyP1();
+        boolean p2 = params.isCertifyP2();
+        boolean p3 = params.isCertifyP3();
+        if (hasAnySignatures && (p1 || p2 || p3)) {
+            log.warn("[sign-row] Document already has signatures. Ignoring DocMDP certification request.");
+            return null;
+        }
+        if (p1 && (p2 || p3)) {
+            log.warn("[sign-row] Multiple certification flags set. Using the strictest DocMDP level P=1.");
+        }
+        if (p1) {
+            return PdfSignatureAppearance.CERTIFIED_NO_CHANGES_ALLOWED;
+        }
+        if (p2 && p3) {
+            log.warn("[sign-row] Multiple certification flags set. Using DocMDP level P=2.");
+        }
+        if (p2) {
+            return PdfSignatureAppearance.CERTIFIED_FORM_FILLING;
+        }
+        if (p3) {
+            return PdfSignatureAppearance.CERTIFIED_FORM_FILLING_AND_ANNOTATIONS;
+        }
+        return null;
+    }
+
+    private void logPreSigningState(PdfReader reader, File prevFile) {
+        try {
+            AcroFields af = reader.getAcroFields();
+            java.util.List<String> names = af.getSignatureNames();
+            String byteRangeDesc = "n/a";
+            if (!names.isEmpty()) {
+                PdfDictionary sigDict = af.getSignatureDictionary(names.get(0));
+                PdfArray br = sigDict != null ? sigDict.getAsArray(PdfName.BYTERANGE) : null;
+                byteRangeDesc = describeByteRange(br);
+            }
+            long prevLen = (prevFile != null && prevFile.exists()) ? prevFile.length() : -1L;
+            log.info("[sign-row] existing signatures count={} firstByteRange={} prevLen={}B prevPath='{}'", names.size(),
+                    byteRangeDesc, prevLen, prevFile == null ? "n/a" : prevFile.getAbsolutePath());
+        } catch (Exception e) {
+            log.warn("[sign-row] Failed to log pre-signing state: {}", e.toString());
+        }
+    }
+
+    private static String describeByteRange(PdfArray br) {
+        if (br == null || br.size() != 4) {
+            return "n/a";
+        }
+        return String.format("[%s, %s, %s, %s]",
+                br.getAsNumber(0), br.getAsNumber(1), br.getAsNumber(2), br.getAsNumber(3));
+    }
+
+    private static long computePrevRevisionLength(File prev, File curr) throws IOException {
+        if (prev != null && prev.exists()) {
+            return prev.length();
+        }
+        if (curr == null || !curr.exists()) {
+            throw new IOException("Current file not found while computing previous revision length: " + curr);
+        }
+        com.itextpdf.text.pdf.PdfReader r = null;
+        try {
+            r = new com.itextpdf.text.pdf.PdfReader(curr.getAbsolutePath());
+            com.itextpdf.text.pdf.AcroFields af = r.getAcroFields();
+            java.util.List<String> names = af.getSignatureNames();
+            if (names.isEmpty()) {
+                throw new IOException("No signatures found in current document; cannot determine previous revision boundary.");
+            }
+            long minEnd = Long.MAX_VALUE;
+            for (String name : names) {
+                com.itextpdf.text.pdf.PdfDictionary sig = af.getSignatureDictionary(name);
+                if (sig == null) {
+                    continue;
+                }
+                com.itextpdf.text.pdf.PdfArray br = sig.getAsArray(com.itextpdf.text.pdf.PdfName.BYTERANGE);
+                if (br == null || br.size() != 4) {
+                    continue;
+                }
+                long start2 = br.getAsNumber(2).longValue();
+                long len2 = br.getAsNumber(3).longValue();
+                long end = start2 + len2;
+                if (end < minEnd) {
+                    minEnd = end;
+                }
+            }
+            if (minEnd == Long.MAX_VALUE) {
+                throw new IOException("Unable to compute previous revision length from signatures.");
+            }
+            return minEnd;
+        } finally {
+            if (r != null) {
+                r.close();
+            }
+        }
+    }
+
+    private static void assertPrefixUnchanged(File prev, File curr, long prefixLen, Logger log) throws IOException {
+        if (prefixLen < 0) {
+            throw new IllegalArgumentException("Prefix length must be >= 0");
+        }
+        if (prev == null || !prev.exists()) {
+            throw new IOException("Previous revision file missing for incremental check: " + prev);
+        }
+        if (curr == null || !curr.exists()) {
+            throw new IOException("Current file missing for incremental check: " + curr);
+        }
+        try (BufferedInputStream in1 = new BufferedInputStream(new FileInputStream(prev));
+             BufferedInputStream in2 = new BufferedInputStream(new FileInputStream(curr))) {
+            long pos = 0;
+            while (pos < prefixLen) {
+                int b1 = in1.read();
+                int b2 = in2.read();
+                if (b1 != b2) {
+                    throw new IllegalStateException(
+                            String.format("NON-INCREMENTAL CHANGE DETECTED at offset %d: prev=0x%02X, curr=0x%02X. "
+                                            + "Your second signing rewrote earlier bytes. Remove any full-save/flatten/compression and keep all ops in a single iText append-mode signing session.",
+                                    pos, b1, b2));
+                }
+                pos++;
+            }
+        }
+        log.info("[INCREMENTAL-CHECK] OK. New file keeps first {} bytes identical to previous revision.", prefixLen);
     }
 
     private static String safe(String value) {
