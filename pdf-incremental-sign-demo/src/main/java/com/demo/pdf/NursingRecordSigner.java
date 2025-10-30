@@ -1073,8 +1073,8 @@ public final class NursingRecordSigner {
                 int rev = af.getRevision(name);
                 boolean covers = af.signatureCoversWholeDocument(name);
                 String subFilter = String.valueOf(sigDict.get(com.itextpdf.text.pdf.PdfName.SUBFILTER));
-                String reason = com.itextpdf.text.pdf.security.PdfPKCS7.getReason(sigDict);
-                String location = com.itextpdf.text.pdf.security.PdfPKCS7.getLocation(sigDict);
+                String reason = pkcs7.getReason();
+                String location = pkcs7.getLocation();
                 java.util.Calendar cal = pkcs7.getSignDate();
                 String when = (cal == null) ? "n/a" : new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ssZ").format(cal.getTime());
                 String brStr = (br == null) ? "n/a" : String.format("[%s, %s, %s, %s]",
