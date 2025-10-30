@@ -24,6 +24,8 @@ import com.itextpdf.text.pdf.security.MakeSignature;
 import com.itextpdf.text.pdf.security.PrivateKeySignature;
 import com.itextpdf.text.pdf.security.TSAClient;
 import com.itextpdf.text.pdf.security.TSAClientBouncyCastle;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 
 import java.io.ByteArrayOutputStream;
@@ -52,6 +54,8 @@ import com.itextpdf.text.pdf.PdfContentByte;
  * Helper that fills a nursing record row and signs it incrementally.
  */
 public final class NursingRecordSigner {
+
+    private static final Logger log = LoggerFactory.getLogger(NursingRecordSigner.class);
 
     private static final float ROW_STEP = 120f;
     private static final float TIME_LEFT = 36f;
@@ -368,6 +372,14 @@ public final class NursingRecordSigner {
             throw new IllegalArgumentException("PKCS12 path and password must be provided");
         }
 
+        log.info("[sign-row] src={}, dest={}, row={}, time='{}', nurse='{}'",
+                params.getSource(), params.getDestination(), params.getRow(), params.getTimeValue(),
+                params.getNurse());
+        log.info("[sign-row] fallbackDraw={}, page={}, tableTopY={}, rowHeight={}, timeX={}, textX={}, nurseX={}, textMaxW={}, fontSize={}",
+                params.isFallbackDraw(), params.getPageIndex(), params.getTableTopY(), params.getRowHeight(),
+                params.getTimeX(), params.getTextX(), params.getNurseX(), params.getTextMaxWidth(),
+                params.getFontSize());
+
         if (params.isFallbackDraw()) {
             signRowWithFallbackDrawing(params);
             return;
@@ -382,8 +394,10 @@ public final class NursingRecordSigner {
         float rowHeight = params.getRowHeight();
         float yBase = tableTopY - (row - 1) * rowHeight;
 
+        dumpSignatures("BEFORE", params.getSource());
+
         BaseFont cjkFont = resolveBaseFont(params.getCjkFontPath());
-        System.out.println("[sign-row] Using font for text fields: " + cjkFont.getPostscriptFontName());
+        log.info("[sign-row] Using font for text fields: {}", cjkFont.getPostscriptFontName());
         Font appearanceFont = new Font(cjkFont, 10f);
 
         PdfReader reader = null;
@@ -393,8 +407,6 @@ public final class NursingRecordSigner {
 
         try {
             reader = new PdfReader(params.getSource());
-            PdfDictionary perms = reader.getCatalog().getAsDict(PdfName.PERMS);
-            boolean certified = perms != null && perms.getAsDict(PdfName.DOCMDP) != null;
             os = new FileOutputStream(params.getDestination());
 
             Rectangle pageRect = requirePageRectangle(reader, pageIndex);
@@ -402,6 +414,7 @@ public final class NursingRecordSigner {
             validateRectangle(textRect, pageRect, "text");
             validateRectangle(nurseRect, pageRect, "nurse");
             stamper = PdfStamper.createSignature(reader, os, '\0', null, true);
+            log.info("[sign-row] createSignature append=true");
 
             AcroFields acroFields = stamper.getAcroFields();
             ensureAcroFormIText5(reader, stamper, cjkFont);
@@ -477,28 +490,50 @@ public final class NursingRecordSigner {
 
             PdfSignatureAppearance appearance = stamper.getSignatureAppearance();
             String signFieldName = resolveSignatureFieldName(params);
-            AcroFields af = reader.getAcroFields();
-            boolean hasField = af != null && af.getFieldItem(signFieldName) != null;
-            boolean hasAnySignatures = af != null && !af.getSignatureNames().isEmpty();
+            AcroFields af = new AcroFields(reader, null);
+            boolean hasField = af.getFieldItem(signFieldName) != null;
+            boolean hasAnySignatures = !af.getSignatureNames().isEmpty();
+
+            boolean doCertify = !hasAnySignatures || params.isCertifyP3();
+            if (hasAnySignatures && params.isCertifyP3()) {
+                log.warn("[sign-row] Document already has signatures. Ignoring certifyP3 for subsequent signatures.");
+                doCertify = false;
+            }
+
+            if (doCertify) {
+                int level;
+                if (params.isCertifyP3()) {
+                    level = PdfSignatureAppearance.CERTIFIED_FORM_FILLING_AND_ANNOTATIONS;
+                    log.info("[sign-row] Applying DocMDP as FIRST signature (P=3).");
+                } else {
+                    level = PdfSignatureAppearance.CERTIFIED_FORM_FILLING;
+                    log.info("[sign-row] Applying DocMDP as FIRST signature (P=2).");
+                }
+                appearance.setCertificationLevel(level);
+            } else {
+                log.info("[sign-row] Approval signature (no DocMDP).");
+            }
 
             if (params.isSignVisible()) {
                 if (hasField) {
+                    log.info("[sign-row] visible-sign field='{}' page={} rect=n/a certifyP3={}",
+                            signFieldName, pageIndex, params.isCertifyP3());
                     appearance.setVisibleSignature(signFieldName);
-                    System.out.println("[visible-sign:field] " + signFieldName);
                 } else {
                     Rectangle signatureRect = computeSignatureRectangle(params, yBase);
+                    float signX = signatureRect.getLeft();
+                    float signY = signatureRect.getBottom();
+                    float signW = signatureRect.getWidth();
+                    float signH = signatureRect.getHeight();
+                    log.info("[sign-row] visible-sign field='{}' page={} rect=[{},{} ,{} ,{}] certifyP3={}",
+                            signFieldName, pageIndex, signX, signY, signX + signW, signY + signH,
+                            params.isCertifyP3());
                     appearance.setVisibleSignature(signatureRect, pageIndex, signFieldName);
-                    System.out.printf("[visible-sign:rect] page=%d rect=[%.1f,%.1f,%.1f,%.1f] field=%s%n",
-                            pageIndex,
-                            signatureRect.getLeft(),
-                            signatureRect.getBottom(),
-                            signatureRect.getRight(),
-                            signatureRect.getTop(),
-                            signFieldName);
                 }
             } else {
+                log.info("[sign-row] visible-sign field='{}' page={} rect=n/a certifyP3={} (invisible)",
+                        signFieldName, pageIndex, params.isCertifyP3());
                 appearance.setVisibleSignature(signFieldName);
-                System.out.println("[visible-sign:none] Invisible signature requested");
             }
 
             appearance.setReason(params.getReason());
@@ -508,22 +543,14 @@ public final class NursingRecordSigner {
             appearance.setRenderingMode(PdfSignatureAppearance.RenderingMode.DESCRIPTION);
             appearance.setLayer2Font(appearanceFont);
             appearance.setLayer2Text(buildLayer2Text(params));
-            if (params.isCertifyP3()) {
-                if (certified) {
-                    System.err.println("[sign-row] Document already certified; skipping DocMDP update.");
-                } else if (hasAnySignatures) {
-                    System.err.println("[sign-row] Existing signatures detected; skipping DocMDP update.");
-                } else {
-                    appearance.setCertificationLevel(
-                            PdfSignatureAppearance.CERTIFIED_FORM_FILLING_AND_ANNOTATIONS);
-                }
-            }
 
             KeyMaterial keyMaterial = loadKeyMaterial(params);
             TSAClient tsaClient = buildTsaClient(params);
 
             signDetachedCalled = true;
             signDetachedWithBC(appearance, keyMaterial.privateKey, keyMaterial.chain, tsaClient);
+
+            dumpSignatures("AFTER", params.getDestination());
         } catch (Exception e) {
             try {
                 if (!signDetachedCalled && stamper != null) {
@@ -561,22 +588,30 @@ public final class NursingRecordSigner {
     }
 
     private void signRowWithFallbackDrawing(SignParams params) throws Exception {
+        log.info("[sign-row:fallback] src={}, dest={}, row={}, time='{}', nurse='{}'",
+                params.getSource(), params.getDestination(), params.getRow(), params.getTimeValue(),
+                params.getNurse());
+        log.info("[sign-row:fallback] page={}, tableTopY={}, rowHeight={}, timeX={}, textX={}, nurseX={}, textMaxW={}, fontSize={}",
+                params.getPageIndex(), params.getTableTopY(), params.getRowHeight(), params.getTimeX(),
+                params.getTextX(), params.getNurseX(), params.getTextMaxWidth(), params.getFontSize());
+
+        dumpSignatures("BEFORE", params.getSource());
+
         PdfReader reader = null;
         FileOutputStream os = null;
         PdfStamper stamper = null;
         boolean signDetachedCalled = false;
         try {
             reader = new PdfReader(params.getSource());
-            PdfDictionary perms = reader.getCatalog().getAsDict(PdfName.PERMS);
-            boolean certified = perms != null && perms.getAsDict(PdfName.DOCMDP) != null;
-            AcroFields af = reader.getAcroFields();
-            boolean hasAnySignatures = af != null && !af.getSignatureNames().isEmpty();
+            AcroFields af = new AcroFields(reader, null);
+            boolean hasAnySignatures = !af.getSignatureNames().isEmpty();
 
             int pageIndex = params.getPageIndex();
             requirePageRectangle(reader, pageIndex);
 
             os = new FileOutputStream(params.getDestination());
             stamper = PdfStamper.createSignature(reader, os, '\0', null, true);
+            log.info("[sign-row:fallback] createSignature append=true");
 
             PdfSignatureAppearance appearance = stamper.getSignatureAppearance();
             if (params.getReason() != null) {
@@ -597,6 +632,28 @@ public final class NursingRecordSigner {
             appearance.setLayer2Font(signatureFont);
             appearance.setLayer2Text(buildLayer2Text(params));
 
+            boolean doCertify = !hasAnySignatures || params.isCertifyP3();
+            if (hasAnySignatures && params.isCertifyP3()) {
+                log.warn("[sign-row] Document already has signatures. Ignoring certifyP3 for subsequent signatures.");
+                doCertify = false;
+            }
+
+            if (doCertify) {
+                int level;
+                if (params.isCertifyP3()) {
+                    level = PdfSignatureAppearance.CERTIFIED_FORM_FILLING_AND_ANNOTATIONS;
+                    log.info("[sign-row] Applying DocMDP as FIRST signature (P=3).");
+                } else {
+                    level = PdfSignatureAppearance.CERTIFIED_FORM_FILLING;
+                    log.info("[sign-row] Applying DocMDP as FIRST signature (P=2).");
+                }
+                appearance.setCertificationLevel(level);
+            } else {
+                log.info("[sign-row] Approval signature (no DocMDP).");
+            }
+
+            PdfDictionary perms = reader.getCatalog().getAsDict(PdfName.PERMS);
+            boolean certified = perms != null && perms.getAsDict(PdfName.DOCMDP) != null;
             if (certified) {
                 applyFallbackAnnotations(stamper, params);
             } else {
@@ -605,36 +662,27 @@ public final class NursingRecordSigner {
 
             float yBase = params.getTableTopY() - (params.getRow() - 1) * params.getRowHeight();
             String signFieldName = resolveSignatureFieldName(params);
-            boolean hasField = af != null && af.getFieldItem(signFieldName) != null;
+            boolean hasField = af.getFieldItem(signFieldName) != null;
             if (params.isSignVisible()) {
                 if (hasField) {
+                    log.info("[sign-row] visible-sign field='{}' page={} rect=n/a certifyP3={}",
+                            signFieldName, pageIndex, params.isCertifyP3());
                     appearance.setVisibleSignature(signFieldName);
-                    System.out.println("[visible-sign:field] " + signFieldName);
                 } else {
                     Rectangle signatureRect = computeSignatureRectangle(params, yBase);
+                    float signX = signatureRect.getLeft();
+                    float signY = signatureRect.getBottom();
+                    float signW = signatureRect.getWidth();
+                    float signH = signatureRect.getHeight();
+                    log.info("[sign-row] visible-sign field='{}' page={} rect=[{},{} ,{} ,{}] certifyP3={}",
+                            signFieldName, pageIndex, signX, signY, signX + signW, signY + signH,
+                            params.isCertifyP3());
                     appearance.setVisibleSignature(signatureRect, pageIndex, signFieldName);
-                    System.out.printf("[fallback-sign:rect] page=%d rect=[%.1f,%.1f,%.1f,%.1f] field=%s%n",
-                            pageIndex,
-                            signatureRect.getLeft(),
-                            signatureRect.getBottom(),
-                            signatureRect.getRight(),
-                            signatureRect.getTop(),
-                            signFieldName);
                 }
             } else {
+                log.info("[sign-row] visible-sign field='{}' page={} rect=n/a certifyP3={} (invisible)",
+                        signFieldName, pageIndex, params.isCertifyP3());
                 appearance.setVisibleSignature(signFieldName);
-                System.out.println("[fallback-sign:none] Invisible signature requested");
-            }
-
-            if (params.isCertifyP3()) {
-                if (certified) {
-                    System.err.println("[sign-row] Document already certified; skipping DocMDP update.");
-                } else if (hasAnySignatures) {
-                    System.err.println("[sign-row] Existing signatures detected; skipping DocMDP update.");
-                } else {
-                    appearance.setCertificationLevel(
-                            PdfSignatureAppearance.CERTIFIED_FORM_FILLING_AND_ANNOTATIONS);
-                }
             }
 
             KeyMaterial keyMaterial = loadKeyMaterial(params);
@@ -642,6 +690,8 @@ public final class NursingRecordSigner {
 
             signDetachedCalled = true;
             signDetachedWithBC(appearance, keyMaterial.privateKey, keyMaterial.chain, tsaClient);
+
+            dumpSignatures("AFTER", params.getDestination());
         } catch (Exception e) {
             try {
                 if (!signDetachedCalled && stamper != null) {
@@ -784,7 +834,7 @@ public final class NursingRecordSigner {
         addFreeTextAnnotation(stamper, pageIndex, params.getTextX(), boxBottom, textWidth, textHeight,
                 content, annotationFont, params.getFontSize());
 
-        System.out.printf("[fallback-ann] page=%d row=%d baseline=%.2f time=(%.1f,%.1f) text=(%.1f,%.1f) nurse=(%.1f,%.1f)%n",
+        log.info("[fallback-ann] page={} row={} baseline={} time=({}, {}) text=({}, {}) nurse=({}, {})",
                 pageIndex, row, baselineY, params.getTimeX(), baselineY, params.getTextX(), baselineY,
                 params.getNurseX(), baselineY);
     }
@@ -848,7 +898,7 @@ public final class NursingRecordSigner {
                     params.getNurseX(), baselineY, 0f);
         }
 
-        System.out.printf("[fallback-draw] page=%d row=%d baseline=%.2f time=(%.1f,%.1f) textX=%.1f nurse=(%.1f,%.1f)%n",
+        log.info("[fallback-draw] page={} row={} baseline={} time=({}, {}) textX={} nurse=({}, {})",
                 pageIndex1Based,
                 row,
                 baselineY,
@@ -999,6 +1049,63 @@ public final class NursingRecordSigner {
         return nurseLine + "\n" + timeLine + "\n" + textLine;
     }
 
+    private static void dumpSignatures(String tag, String path) {
+        try {
+            com.itextpdf.text.pdf.PdfReader r = new com.itextpdf.text.pdf.PdfReader(path);
+            com.itextpdf.text.pdf.AcroFields af = r.getAcroFields();
+            java.util.List<String> names = af.getSignatureNames();
+
+            Integer p = getDocMdpPermission(r);
+            String pText = (p == null) ? "none"
+                    : (p == 1 ? "P=1 (no changes)"
+                    : (p == 2 ? "P=2 (form fill-in & signing allowed)"
+                    : (p == 3 ? "P=3 (annotations, form fill-in & signing allowed)"
+                    : "P=" + p)));
+
+            log.info("[{}][dump] file='{}' size={}B, signatures={}, DocMDP={}",
+                    tag, path, new java.io.File(path).length(), names.size(), pText);
+
+            int total = af.getTotalRevisions();
+            for (String name : names) {
+                com.itextpdf.text.pdf.PdfDictionary sigDict = af.getSignatureDictionary(name);
+                com.itextpdf.text.pdf.PdfArray br = sigDict.getAsArray(com.itextpdf.text.pdf.PdfName.BYTERANGE);
+                com.itextpdf.text.pdf.security.PdfPKCS7 pkcs7 = af.verifySignature(name);
+                int rev = af.getRevision(name);
+                boolean covers = af.signatureCoversWholeDocument(name);
+                String subFilter = String.valueOf(sigDict.get(com.itextpdf.text.pdf.PdfName.SUBFILTER));
+                String reason = com.itextpdf.text.pdf.PdfPKCS7.getReason(sigDict);
+                String location = com.itextpdf.text.pdf.PdfPKCS7.getLocation(sigDict);
+                java.util.Calendar cal = pkcs7.getSignDate();
+                String when = (cal == null) ? "n/a" : new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ssZ").format(cal.getTime());
+                String brStr = (br == null) ? "n/a" : String.format("[%s, %s, %s, %s]",
+                        br.getAsNumber(0), br.getAsNumber(1), br.getAsNumber(2), br.getAsNumber(3));
+
+                log.info("[{}][sig] name='{}' rev={}/{} coversWholeDoc={} subFilter={} time={} reason='{}' location='{}' byteRange={}",
+                        tag, name, rev, total, covers, subFilter, when, reason, location, brStr);
+            }
+            r.close();
+        } catch (Exception e) {
+            log.warn("[{}][dump] fail for {}: {}", tag, path, e.toString());
+        }
+    }
+
+    private static Integer getDocMdpPermission(com.itextpdf.text.pdf.PdfReader r) {
+        com.itextpdf.text.pdf.PdfDictionary catalog = r.getCatalog();
+        if (catalog == null) return null;
+        com.itextpdf.text.pdf.PdfDictionary perms = catalog.getAsDict(com.itextpdf.text.pdf.PdfName.PERMS);
+        if (perms == null) return null;
+        com.itextpdf.text.pdf.PdfDictionary docmdp = perms.getAsDict(com.itextpdf.text.pdf.PdfName.DOCMDP);
+        if (docmdp == null) return null;
+        com.itextpdf.text.pdf.PdfArray refArr = docmdp.getAsArray(com.itextpdf.text.pdf.PdfName.REFERENCE);
+        if (refArr == null || refArr.size() == 0) return null;
+        com.itextpdf.text.pdf.PdfDictionary ref = refArr.getAsDict(0);
+        if (ref == null) return null;
+        com.itextpdf.text.pdf.PdfDictionary tp = ref.getAsDict(com.itextpdf.text.pdf.PdfName.TRANSFORMPARAMS);
+        if (tp == null) return null;
+        com.itextpdf.text.pdf.PdfNumber p = tp.getAsNumber(com.itextpdf.text.pdf.PdfName.P);
+        return (p == null) ? null : p.intValue();
+    }
+
     private static String safe(String value) {
         return value == null ? "" : value.strip();
     }
@@ -1017,7 +1124,7 @@ public final class NursingRecordSigner {
             if (Files.exists(path)) {
                 return BaseFont.createFont(path.toString(), BaseFont.IDENTITY_H, BaseFont.EMBEDDED);
             }
-            System.err.println("[sign-row] CJK font not found at " + path + "; falling back to bundled font");
+            log.warn("[sign-row] CJK font not found at {}; falling back to bundled font", path);
         }
         try (InputStream in = NursingRecordSigner.class.getResourceAsStream("/" + bundledName)) {
             if (in == null) {
@@ -1044,7 +1151,7 @@ public final class NursingRecordSigner {
             if (Files.exists(path)) {
                 return BaseFont.createFont(path.toString(), BaseFont.IDENTITY_H, BaseFont.EMBEDDED);
             } else {
-                System.err.println("[sign-row] CJK font not found at " + path + ", falling back to defaults");
+                log.warn("[sign-row] CJK font not found at {}, falling back to defaults", path);
             }
         }
         Path bundled = Paths.get("src/main/resources/NotoSansCJKsc-Regular.otf");
@@ -1058,7 +1165,7 @@ public final class NursingRecordSigner {
                         false, resource, null, false, false);
             }
         } catch (IOException e) {
-            System.err.println("[sign-row] Failed to load embedded CJK font, falling back to Helvetica: " + e.getMessage());
+            log.warn("[sign-row] Failed to load embedded CJK font, falling back to Helvetica: {}", e.getMessage());
         }
         return BaseFont.createFont(BaseFont.HELVETICA, BaseFont.WINANSI, BaseFont.NOT_EMBEDDED);
     }
