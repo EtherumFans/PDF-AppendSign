@@ -26,6 +26,7 @@ import com.itextpdf.text.pdf.security.TSAClient;
 import com.itextpdf.text.pdf.security.TSAClientBouncyCastle;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -99,7 +100,7 @@ public final class NursingRecordSigner {
         private float fontSize = 10f;
         private float textMaxWidth = 330f;
         private boolean signVisible = true;
-        private String signFieldTemplate = "sig_row_{row}";
+        private String signFieldTemplate = "sig_row_%d";
         private float signX = -1f;
         private float signWidth = 120f;
         private float signHeight = 18f;
@@ -367,6 +368,11 @@ public final class NursingRecordSigner {
             throw new IllegalArgumentException("PKCS12 path and password must be provided");
         }
 
+        if (params.isFallbackDraw()) {
+            signRowWithFallbackDrawing(params);
+            return;
+        }
+
         int row = params.getRow();
         Rectangle timeRect = rectForTime(row);
         Rectangle textRect = rectForText(row);
@@ -375,8 +381,6 @@ public final class NursingRecordSigner {
         float tableTopY = params.getTableTopY();
         float rowHeight = params.getRowHeight();
         float yBase = tableTopY - (row - 1) * rowHeight;
-
-        boolean fallbackActive = shouldFallbackToDrawing(params);
 
         BaseFont cjkFont = resolveBaseFont(params.getCjkFontPath());
         System.out.println("[sign-row] Using font for text fields: " + cjkFont.getPostscriptFontName());
@@ -404,89 +408,75 @@ public final class NursingRecordSigner {
             acroFields.addSubstitutionFont(cjkFont);
             acroFields.setGenerateAppearances(true);
 
-            if (fallbackActive) {
-                if (certified) {
-                    applyFallbackAnnotations(stamper, params);
-                } else {
-                    BaseFont fallbackFont;
-                    try {
-                        fallbackFont = resolveFallbackBaseFont(params);
-                    } catch (Exception e) {
-                        throw new IOException("Unable to resolve fallback font", e);
-                    }
-                    drawRowFallback(stamper, params, fallbackFont);
-                }
-            } else {
-                FieldResolution timeField = resolveOrInjectTextField(
-                        stamper,
-                        acroFields,
-                        row,
-                        new String[]{"row%d.time", "recordTime_%d"},
-                        timeRect,
-                        pageIndex,
-                        cjkFont,
-                        12f
-                );
-                if (timeField.created) {
-                    acroFields = stamper.getAcroFields();
-                }
-                FieldResolution textField = resolveOrInjectTextField(
-                        stamper,
-                        acroFields,
-                        row,
-                        new String[]{"row%d.text", "recordText_%d"},
-                        textRect,
-                        pageIndex,
-                        cjkFont,
-                        12f
-                );
-                if (textField.created) {
-                    acroFields = stamper.getAcroFields();
-                }
-                FieldResolution nurseField = resolveOrInjectTextField(
-                        stamper,
-                        acroFields,
-                        row,
-                        new String[]{"row%d.nurse", "recordNurse_%d"},
-                        nurseRect,
-                        pageIndex,
-                        cjkFont,
-                        12f
-                );
-                if (nurseField.created) {
-                    acroFields = stamper.getAcroFields();
-                }
-
-                acroFields.setFieldProperty(timeField.name, "textfont", cjkFont, null);
-                acroFields.setFieldProperty(textField.name, "textfont", cjkFont, null);
-                acroFields.setFieldProperty(nurseField.name, "textfont", cjkFont, null);
-                acroFields.setFieldProperty(timeField.name, "textsize", 12f, null);
-                acroFields.setFieldProperty(textField.name, "textsize", 12f, null);
-                acroFields.setFieldProperty(nurseField.name, "textsize", 12f, null);
-
-                if (!acroFields.setField(timeField.name, safe(params.getTimeValue()))) {
-                    throw new IllegalStateException("Unable to set field: " + timeField.name
-                            + " fields=" + dumpFieldNames(acroFields));
-                }
-                if (!acroFields.setField(textField.name, safe(params.getTextValue()))) {
-                    throw new IllegalStateException("Unable to set field: " + textField.name
-                            + " fields=" + dumpFieldNames(acroFields));
-                }
-                if (!acroFields.setField(nurseField.name, safe(params.getNurse()))) {
-                    throw new IllegalStateException("Unable to set field: " + nurseField.name
-                            + " fields=" + dumpFieldNames(acroFields));
-                }
-
-                acroFields.setFieldProperty(timeField.name, "setfflags", PdfFormField.FF_READ_ONLY, null);
-                acroFields.setFieldProperty(textField.name, "setfflags", PdfFormField.FF_READ_ONLY, null);
-                acroFields.setFieldProperty(nurseField.name, "setfflags", PdfFormField.FF_READ_ONLY, null);
-                acroFields.regenerateField(timeField.name);
-                acroFields.regenerateField(textField.name);
-                acroFields.regenerateField(nurseField.name);
+            FieldResolution timeField = resolveOrInjectTextField(
+                    stamper,
+                    acroFields,
+                    row,
+                    new String[]{"row%d.time", "recordTime_%d"},
+                    timeRect,
+                    pageIndex,
+                    cjkFont,
+                    12f
+            );
+            if (timeField.created) {
+                acroFields = stamper.getAcroFields();
+            }
+            FieldResolution textField = resolveOrInjectTextField(
+                    stamper,
+                    acroFields,
+                    row,
+                    new String[]{"row%d.text", "recordText_%d"},
+                    textRect,
+                    pageIndex,
+                    cjkFont,
+                    12f
+            );
+            if (textField.created) {
+                acroFields = stamper.getAcroFields();
+            }
+            FieldResolution nurseField = resolveOrInjectTextField(
+                    stamper,
+                    acroFields,
+                    row,
+                    new String[]{"row%d.nurse", "recordNurse_%d"},
+                    nurseRect,
+                    pageIndex,
+                    cjkFont,
+                    12f
+            );
+            if (nurseField.created) {
+                acroFields = stamper.getAcroFields();
             }
 
+            acroFields.setFieldProperty(timeField.name, "textfont", cjkFont, null);
+            acroFields.setFieldProperty(textField.name, "textfont", cjkFont, null);
+            acroFields.setFieldProperty(nurseField.name, "textfont", cjkFont, null);
+            acroFields.setFieldProperty(timeField.name, "textsize", 12f, null);
+            acroFields.setFieldProperty(textField.name, "textsize", 12f, null);
+            acroFields.setFieldProperty(nurseField.name, "textsize", 12f, null);
+
+            if (!acroFields.setField(timeField.name, safe(params.getTimeValue()))) {
+                throw new IllegalStateException("Unable to set field: " + timeField.name
+                        + " fields=" + dumpFieldNames(acroFields));
+            }
+            if (!acroFields.setField(textField.name, safe(params.getTextValue()))) {
+                throw new IllegalStateException("Unable to set field: " + textField.name
+                        + " fields=" + dumpFieldNames(acroFields));
+            }
+            if (!acroFields.setField(nurseField.name, safe(params.getNurse()))) {
+                throw new IllegalStateException("Unable to set field: " + nurseField.name
+                        + " fields=" + dumpFieldNames(acroFields));
+            }
+
+            acroFields.setFieldProperty(timeField.name, "setfflags", PdfFormField.FF_READ_ONLY, null);
+            acroFields.setFieldProperty(textField.name, "setfflags", PdfFormField.FF_READ_ONLY, null);
+            acroFields.setFieldProperty(nurseField.name, "setfflags", PdfFormField.FF_READ_ONLY, null);
+            acroFields.regenerateField(timeField.name);
+            acroFields.regenerateField(textField.name);
+            acroFields.regenerateField(nurseField.name);
+
             PdfSignatureAppearance appearance = stamper.getSignatureAppearance();
-            String signFieldName = "sig_row_" + row;
+            String signFieldName = resolveSignatureFieldName(params);
             AcroFields af = reader.getAcroFields();
             boolean hasField = af != null && af.getFieldItem(signFieldName) != null;
             boolean hasAnySignatures = af != null && !af.getSignatureNames().isEmpty();
@@ -507,6 +497,7 @@ public final class NursingRecordSigner {
                             signFieldName);
                 }
             } else {
+                appearance.setVisibleSignature(signFieldName);
                 System.out.println("[visible-sign:none] Invisible signature requested");
             }
 
@@ -528,26 +519,129 @@ public final class NursingRecordSigner {
                 }
             }
 
-            if (Security.getProvider(BouncyCastleProvider.PROVIDER_NAME) == null) {
-                Security.addProvider(new BouncyCastleProvider());
-            }
-
-            KeyStore keyStore = KeyStore.getInstance("PKCS12");
-            char[] passwordChars = params.getPassword() == null ? new char[0] : params.getPassword().toCharArray();
-            try (FileInputStream pkcs12Stream = new FileInputStream(params.getPkcs12Path())) {
-                keyStore.load(pkcs12Stream, passwordChars);
-            }
-            String alias = (String) keyStore.aliases().nextElement();
-            PrivateKey privateKey = (PrivateKey) keyStore.getKey(alias, passwordChars);
-            Certificate[] chain = keyStore.getCertificateChain(alias);
-
-            TSAClient tsaClient = null;
-            if (params.getTsaUrl() != null && !params.getTsaUrl().isBlank()) {
-                tsaClient = new TSAClientBouncyCastle(params.getTsaUrl());
-            }
+            KeyMaterial keyMaterial = loadKeyMaterial(params);
+            TSAClient tsaClient = buildTsaClient(params);
 
             signDetachedCalled = true;
-            signDetachedWithBC(appearance, privateKey, chain, tsaClient);
+            signDetachedWithBC(appearance, keyMaterial.privateKey, keyMaterial.chain, tsaClient);
+        } catch (Exception e) {
+            try {
+                if (!signDetachedCalled && stamper != null) {
+                    stamper.close();
+                }
+            } catch (Exception ignore) {
+            }
+            try {
+                if (os != null) {
+                    os.close();
+                }
+            } catch (Exception ignore) {
+            }
+            try {
+                if (reader != null) {
+                    reader.close();
+                }
+            } catch (Exception ignore) {
+            }
+            if (!signDetachedCalled) {
+                try {
+                    new File(params.getDestination()).delete();
+                } catch (Exception ignore) {
+                }
+            }
+            throw e;
+        } finally {
+            try {
+                if (reader != null) {
+                    reader.close();
+                }
+            } catch (Exception ignore) {
+            }
+        }
+    }
+
+    private void signRowWithFallbackDrawing(SignParams params) throws Exception {
+        PdfReader reader = null;
+        FileOutputStream os = null;
+        PdfStamper stamper = null;
+        boolean signDetachedCalled = false;
+        try {
+            reader = new PdfReader(params.getSource());
+            PdfDictionary perms = reader.getCatalog().getAsDict(PdfName.PERMS);
+            boolean certified = perms != null && perms.getAsDict(PdfName.DOCMDP) != null;
+            AcroFields af = reader.getAcroFields();
+            boolean hasAnySignatures = af != null && !af.getSignatureNames().isEmpty();
+
+            int pageIndex = params.getPageIndex();
+            requirePageRectangle(reader, pageIndex);
+
+            os = new FileOutputStream(params.getDestination());
+            stamper = PdfStamper.createSignature(reader, os, '\0', null, true);
+
+            PdfSignatureAppearance appearance = stamper.getSignatureAppearance();
+            if (params.getReason() != null) {
+                appearance.setReason(params.getReason());
+            }
+            if (params.getLocation() != null) {
+                appearance.setLocation(params.getLocation());
+            }
+            if (params.getContact() != null) {
+                appearance.setContact(params.getContact());
+            }
+            appearance.setSignDate(Calendar.getInstance());
+            appearance.setRenderingMode(PdfSignatureAppearance.RenderingMode.DESCRIPTION);
+
+            BaseFont drawFont = resolveCjkBaseFont(firstNonBlank(params.getFontPath(), params.getCjkFontPath()),
+                    "NotoSansCJKsc-Regular.otf");
+            Font signatureFont = new Font(drawFont, 10f);
+            appearance.setLayer2Font(signatureFont);
+            appearance.setLayer2Text(buildLayer2Text(params));
+
+            if (certified) {
+                applyFallbackAnnotations(stamper, params);
+            } else {
+                drawRowFallback(stamper, params, drawFont);
+            }
+
+            float yBase = params.getTableTopY() - (params.getRow() - 1) * params.getRowHeight();
+            String signFieldName = resolveSignatureFieldName(params);
+            boolean hasField = af != null && af.getFieldItem(signFieldName) != null;
+            if (params.isSignVisible()) {
+                if (hasField) {
+                    appearance.setVisibleSignature(signFieldName);
+                    System.out.println("[visible-sign:field] " + signFieldName);
+                } else {
+                    Rectangle signatureRect = computeSignatureRectangle(params, yBase);
+                    appearance.setVisibleSignature(signatureRect, pageIndex, signFieldName);
+                    System.out.printf("[fallback-sign:rect] page=%d rect=[%.1f,%.1f,%.1f,%.1f] field=%s%n",
+                            pageIndex,
+                            signatureRect.getLeft(),
+                            signatureRect.getBottom(),
+                            signatureRect.getRight(),
+                            signatureRect.getTop(),
+                            signFieldName);
+                }
+            } else {
+                appearance.setVisibleSignature(signFieldName);
+                System.out.println("[fallback-sign:none] Invisible signature requested");
+            }
+
+            if (params.isCertifyP3()) {
+                if (certified) {
+                    System.err.println("[sign-row] Document already certified; skipping DocMDP update.");
+                } else if (hasAnySignatures) {
+                    System.err.println("[sign-row] Existing signatures detected; skipping DocMDP update.");
+                } else {
+                    appearance.setCertificationLevel(
+                            PdfSignatureAppearance.CERTIFIED_FORM_FILLING_AND_ANNOTATIONS);
+                }
+            }
+
+            KeyMaterial keyMaterial = loadKeyMaterial(params);
+            TSAClient tsaClient = buildTsaClient(params);
+
+            signDetachedCalled = true;
+            signDetachedWithBC(appearance, keyMaterial.privateKey, keyMaterial.chain, tsaClient);
         } catch (Exception e) {
             try {
                 if (!signDetachedCalled && stamper != null) {
@@ -594,49 +688,53 @@ public final class NursingRecordSigner {
                 MakeSignature.CryptoStandard.CMS);
     }
 
+    private KeyMaterial loadKeyMaterial(SignParams params) throws Exception {
+        if (Security.getProvider(BouncyCastleProvider.PROVIDER_NAME) == null) {
+            Security.addProvider(new BouncyCastleProvider());
+        }
+        KeyStore keyStore = KeyStore.getInstance("PKCS12");
+        char[] passwordChars = params.getPassword() == null ? new char[0] : params.getPassword().toCharArray();
+        try (FileInputStream pkcs12Stream = new FileInputStream(params.getPkcs12Path())) {
+            keyStore.load(pkcs12Stream, passwordChars);
+        }
+        String alias = (String) keyStore.aliases().nextElement();
+        PrivateKey privateKey = (PrivateKey) keyStore.getKey(alias, passwordChars);
+        Certificate[] chain = keyStore.getCertificateChain(alias);
+        return new KeyMaterial(privateKey, chain);
+    }
+
+    private TSAClient buildTsaClient(SignParams params) {
+        if (params.getTsaUrl() != null && !params.getTsaUrl().isBlank()) {
+            return new TSAClientBouncyCastle(params.getTsaUrl());
+        }
+        return null;
+    }
+
     private static String dumpFieldNames(AcroFields af) {
         return String.valueOf(af.getFields().keySet());
     }
 
-    private boolean shouldFallbackToDrawing(SignParams params) throws IOException {
-        if (!params.isFallbackDraw()) {
-            return false;
-        }
-        PdfReader reader = null;
-        try {
-            reader = new PdfReader(params.getSource());
-            AcroFields form = reader.getAcroFields();
-            if (form == null || form.getFields().isEmpty()) {
-                return true;
+    private static String resolveSignatureFieldName(SignParams params) {
+        String template = params.getSignFieldTemplate();
+        if (template != null && !template.isBlank()) {
+            if (template.contains("%")) {
+                return String.format(template, params.getRow());
             }
-            int row = params.getRow();
-            boolean timeExists = hasAnyField(form,
-                    String.format("row%d.time", row),
-                    String.format("recordTime_%d", row));
-            boolean textExists = hasAnyField(form,
-                    String.format("row%d.text", row),
-                    String.format("recordText_%d", row));
-            boolean nurseExists = hasAnyField(form,
-                    String.format("row%d.nurse", row),
-                    String.format("recordNurse_%d", row));
-            return !(timeExists && textExists && nurseExists);
-        } finally {
-            if (reader != null) {
-                reader.close();
-            }
+            return template.replace("{row}", String.valueOf(params.getRow()));
         }
+        return String.format("sig_row_%d", params.getRow());
     }
 
-    private static boolean hasAnyField(AcroFields form, String... names) {
-        if (form == null) {
-            return false;
+    private static String firstNonBlank(String... values) {
+        if (values == null) {
+            return null;
         }
-        for (String name : names) {
-            if (name != null && form.getField(name) != null) {
-                return true;
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value;
             }
         }
-        return false;
+        return null;
     }
 
     private Rectangle computeSignatureRectangle(SignParams params, float yBase) {
@@ -707,19 +805,6 @@ public final class NursingRecordSigner {
         stamper.addAnnotation(ann, pageIndex);
     }
 
-    private BaseFont resolveFallbackBaseFont(SignParams params) throws Exception {
-        String directFont = params.getFontPath();
-        if (directFont != null && !directFont.isBlank()) {
-            Path path = Paths.get(directFont);
-            if (Files.exists(path)) {
-                return BaseFont.createFont(path.toString(), BaseFont.IDENTITY_H, BaseFont.EMBEDDED);
-            } else {
-                System.err.println("[sign-row] Fallback font not found at " + path + ", trying defaults");
-            }
-        }
-        return resolveBaseFont(params.getCjkFontPath());
-    }
-
     private void drawRowFallback(PdfStamper stamper, SignParams params, BaseFont font)
             throws DocumentException {
         int pageIndex1Based = params.getPageIndex();
@@ -733,7 +818,7 @@ public final class NursingRecordSigner {
             throw new IllegalArgumentException("Row index must be >= 1");
         }
         float baselineY = params.getTableTopY() - (row - 1) * params.getRowHeight();
-        float fontSize = params.getFontSize();
+        float fontSize = params.getFontSize() > 0 ? params.getFontSize() : 10f;
         PdfContentByte canvas = stamper.getOverContent(pageIndex1Based);
         if (canvas == null) {
             throw new IllegalStateException("Unable to obtain over content for page " + pageIndex1Based);
@@ -746,26 +831,21 @@ public final class NursingRecordSigner {
                     params.getTimeX(), baselineY, 0f);
         }
 
+        String text = safe(params.getTextValue());
+        if (!text.isEmpty()) {
+            float maxWidth = params.getTextMaxWidth() > 0 ? params.getTextMaxWidth() : 330f;
+            float textTop = baselineY + params.getRowHeight() - 2f;
+            ColumnText columnText = new ColumnText(canvas);
+            columnText.setSimpleColumn(new Phrase(text, drawFont),
+                    params.getTextX(), baselineY, params.getTextX() + maxWidth, textTop, 0,
+                    Element.ALIGN_LEFT);
+            columnText.go();
+        }
+
         String nurse = safe(params.getNurse());
         if (!nurse.isEmpty()) {
             ColumnText.showTextAligned(canvas, Element.ALIGN_LEFT, new Phrase(nurse, drawFont),
                     params.getNurseX(), baselineY, 0f);
-        }
-
-        String text = safe(params.getTextValue());
-        if (!text.isEmpty()) {
-            float maxWidth = params.getTextMaxWidth() > 0 ? params.getTextMaxWidth() : 330f;
-            float leading = fontSize * 1.2f;
-            float top = baselineY + leading;
-            float bottom = baselineY - Math.max(params.getRowHeight(), leading * 6f);
-            ColumnText columnText = new ColumnText(canvas);
-            columnText.setAlignment(Element.ALIGN_LEFT);
-            columnText.setSimpleColumn(new Phrase(text, drawFont),
-                    params.getTextX(), bottom, params.getTextX() + maxWidth, top, leading, Element.ALIGN_LEFT);
-            int status = columnText.go();
-            if ((status & ColumnText.NO_MORE_TEXT) == 0) {
-                System.err.printf("[fallback-draw] Text truncated for row %d on page %d%n", row, pageIndex1Based);
-            }
         }
 
         System.out.printf("[fallback-draw] page=%d row=%d baseline=%.2f time=(%.1f,%.1f) textX=%.1f nurse=(%.1f,%.1f)%n",
@@ -883,6 +963,16 @@ public final class NursingRecordSigner {
         }
     }
 
+    private static final class KeyMaterial {
+        final PrivateKey privateKey;
+        final Certificate[] chain;
+
+        private KeyMaterial(PrivateKey privateKey, Certificate[] chain) {
+            this.privateKey = privateKey;
+            this.chain = chain;
+        }
+    }
+
     private void ensureAcroFormIText5(PdfReader reader, PdfStamper stamper, BaseFont bf) {
         PdfDictionary catalog = reader.getCatalog();
         PdfDictionary acro = catalog.getAsDict(PdfName.ACROFORM);
@@ -919,6 +1009,33 @@ public final class NursingRecordSigner {
             throw new IllegalStateException("Page " + pageNumber + " not found in document");
         }
         return pageSize;
+    }
+
+    private static BaseFont resolveCjkBaseFont(String fontPath, String bundledName) throws Exception {
+        if (fontPath != null && !fontPath.isEmpty()) {
+            Path path = Paths.get(fontPath);
+            if (Files.exists(path)) {
+                return BaseFont.createFont(path.toString(), BaseFont.IDENTITY_H, BaseFont.EMBEDDED);
+            }
+            System.err.println("[sign-row] CJK font not found at " + path + "; falling back to bundled font");
+        }
+        try (InputStream in = NursingRecordSigner.class.getResourceAsStream("/" + bundledName)) {
+            if (in == null) {
+                return BaseFont.createFont("STSongStd-Light", "UniGB-UCS2-H", BaseFont.NOT_EMBEDDED);
+            }
+            byte[] bytes = toBytes(in);
+            return BaseFont.createFont(bundledName, BaseFont.IDENTITY_H, BaseFont.EMBEDDED, false, bytes, null);
+        }
+    }
+
+    private static byte[] toBytes(InputStream in) throws IOException {
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        byte[] buf = new byte[8192];
+        int n;
+        while ((n = in.read(buf)) >= 0) {
+            bos.write(buf, 0, n);
+        }
+        return bos.toByteArray();
     }
 
     private BaseFont resolveBaseFont(String cjkFontPath) throws Exception {
