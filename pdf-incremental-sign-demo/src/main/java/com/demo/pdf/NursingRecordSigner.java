@@ -8,7 +8,6 @@ import com.itextpdf.text.pdf.AcroFields;
 import com.itextpdf.text.pdf.BaseFont;
 import com.itextpdf.text.pdf.ColumnText;
 import com.itextpdf.text.pdf.PdfAnnotation;
-import com.itextpdf.text.pdf.PdfAppearance;
 import com.itextpdf.text.pdf.PdfDictionary;
 import com.itextpdf.text.pdf.PdfFormField;
 import com.itextpdf.text.pdf.PdfName;
@@ -42,9 +41,7 @@ import java.security.KeyStore;
 import java.security.PrivateKey;
 import java.security.Security;
 import java.security.cert.Certificate;
-import java.util.ArrayList;
 import java.util.Calendar;
-import java.util.List;
 import java.util.Objects;
 
 import com.itextpdf.text.DocumentException;
@@ -652,15 +649,16 @@ public final class NursingRecordSigner {
                 log.info("[sign-row] Approval signature (no DocMDP).");
             }
 
+            float rowBaselineY = params.getTableTopY() - (params.getRow() - 1) * params.getRowHeight();
             PdfDictionary perms = reader.getCatalog().getAsDict(PdfName.PERMS);
             boolean certified = perms != null && perms.getAsDict(PdfName.DOCMDP) != null;
             if (certified) {
-                applyFallbackAnnotations(stamper, params);
-            } else {
-                drawRowFallback(stamper, params, drawFont);
+                // 禁用：新增注释在 DocMDP=P=2 下不被允许，会让前一修订签名失效
+                // applyFallbackAnnotations(stamper, pageIndex, rowBaselineY, /* ... */);
             }
+            drawRowFallback(stamper, params, drawFont);
 
-            float yBase = params.getTableTopY() - (params.getRow() - 1) * params.getRowHeight();
+            float yBase = rowBaselineY;
             String signFieldName = resolveSignatureFieldName(params);
             boolean hasField = af.getFieldItem(signFieldName) != null;
             if (params.isSignVisible()) {
@@ -799,60 +797,22 @@ public final class NursingRecordSigner {
         return new Rectangle(defaultRect);
     }
 
-    private void applyFallbackAnnotations(PdfStamper stamper, SignParams params) throws IOException {
-        BaseFont annotationFont;
-        try {
-            annotationFont = BaseFont.createFont("Helvetica", BaseFont.WINANSI, BaseFont.EMBEDDED);
-        } catch (DocumentException e) {
-            throw new IOException("Unable to initialize annotation font", e);
-        }
-        int pageIndex = params.getPageIndex();
-        int row = params.getRow();
-        float tableTopY = params.getTableTopY();
-        float rowHeight = params.getRowHeight();
-        float baselineY = tableTopY - (row - 1) * rowHeight;
-        float baselineOffset = params.getFontSize();
-        float boxBottom = baselineY - baselineOffset;
-        float defaultHeight = Math.max(rowHeight, baselineOffset * 1.5f);
-
-        float timeWidth = Math.max(60f, params.getTextX() - params.getTimeX());
-        float textWidth = params.getTextMaxWidth() > 0 ? params.getTextMaxWidth() : 330f;
-        float nurseWidth = Math.max(60f, params.getSignWidth());
-
-        String timeText = safe(params.getTimeValue());
-        addFreeTextAnnotation(stamper, pageIndex, params.getTimeX(), boxBottom, timeWidth, defaultHeight,
-                timeText, annotationFont, params.getFontSize());
-
-        String nurseText = safe(params.getNurse());
-        addFreeTextAnnotation(stamper, pageIndex, params.getNurseX(), boxBottom, nurseWidth, defaultHeight,
-                nurseText, annotationFont, params.getFontSize());
-
-        String textValue = safe(params.getTextValue());
-        List<String> wrapped = wrapText(textValue, annotationFont, params.getFontSize(), textWidth);
-        String content = String.join("\n", wrapped);
-        float textHeight = Math.max(defaultHeight, wrapped.size() * params.getFontSize() * 1.2f);
-        addFreeTextAnnotation(stamper, pageIndex, params.getTextX(), boxBottom, textWidth, textHeight,
-                content, annotationFont, params.getFontSize());
-
-        log.info("[fallback-ann] page={} row={} baseline={} time=({}, {}) text=({}, {}) nurse=({}, {})",
-                pageIndex, row, baselineY, params.getTimeX(), baselineY, params.getTextX(), baselineY,
-                params.getNurseX(), baselineY);
-    }
-
-    private void addFreeTextAnnotation(PdfStamper stamper, int pageIndex, float x, float bottom,
-            float width, float height, String text, BaseFont font, float fontSize) throws IOException {
-        if (text == null || text.isBlank()) {
-            return;
-        }
-        float effectiveWidth = Math.max(1f, width);
-        float effectiveHeight = Math.max(1f, height);
-        Rectangle rect = new Rectangle(x, bottom, x + effectiveWidth, bottom + effectiveHeight);
-        PdfAnnotation ann = PdfAnnotation.createFreeText(stamper.getWriter(), rect, text, null);
-        ann.setFlags(PdfAnnotation.FLAGS_PRINT);
-        PdfAppearance da = PdfAppearance.createAppearance(stamper.getWriter(), 0, 0);
-        da.setFontAndSize(font, fontSize);
-        ann.setAppearance(PdfAnnotation.APPEARANCE_NORMAL, da);
-        stamper.addAnnotation(ann, pageIndex);
+    private void applyFallbackAnnotations(
+            com.itextpdf.text.pdf.PdfStamper stamper,
+            int pageIndex,
+            float rowBaselineY,
+            float timeX,
+            float textX,
+            float nurseX,
+            float rowHeight,
+            String timeText,
+            String noteText,
+            String nurseName,
+            com.itextpdf.text.pdf.BaseFont bf,
+            float fontSize
+    ) throws Exception {
+        log.info("[fallback-annot] disabled: honoring DocMDP=P=2 (form fill-in & signing only). No annotations will be added.");
+        // Intentionally no-op to keep the certification chain intact.
     }
 
     private void drawRowFallback(PdfStamper stamper, SignParams params, BaseFont font)
@@ -907,68 +867,6 @@ public final class NursingRecordSigner {
                 params.getTextX(),
                 params.getNurseX(),
                 baselineY);
-    }
-
-    private static List<String> wrapText(String content, BaseFont font, float fontSize, float maxWidth)
-            throws IOException {
-        List<String> lines = new ArrayList<>();
-        if (content == null) {
-            lines.add("");
-            return lines;
-        }
-        String normalized = content.replace("\r", "");
-        String[] paragraphs = normalized.split("\n", -1);
-        for (String paragraph : paragraphs) {
-            if (paragraph.isEmpty()) {
-                lines.add("");
-                continue;
-            }
-            if (maxWidth <= 0) {
-                lines.add(paragraph);
-                continue;
-            }
-            if (paragraph.matches(".*\\s+.*")) {
-                StringBuilder current = new StringBuilder();
-                String[] words = paragraph.split("\\s+");
-                for (String word : words) {
-                    if (word.isEmpty()) {
-                        continue;
-                    }
-                    String candidate = current.length() == 0 ? word : current + " " + word;
-                    float width = font.getWidthPoint(candidate, fontSize);
-                    if (width > maxWidth && current.length() > 0) {
-                        lines.add(current.toString());
-                        current = new StringBuilder(word);
-                    } else {
-                        current = new StringBuilder(candidate);
-                    }
-                }
-                if (current.length() > 0) {
-                    lines.add(current.toString());
-                } else {
-                    lines.add("");
-                }
-            } else {
-                StringBuilder current = new StringBuilder();
-                for (int i = 0; i < paragraph.length(); i++) {
-                    char ch = paragraph.charAt(i);
-                    String candidate = current.toString() + ch;
-                    float width = font.getWidthPoint(candidate, fontSize);
-                    if (width > maxWidth && current.length() > 0) {
-                        lines.add(current.toString());
-                        current = new StringBuilder();
-                        current.append(ch);
-                    } else {
-                        current.append(ch);
-                    }
-                }
-                lines.add(current.toString());
-            }
-        }
-        if (lines.isEmpty()) {
-            lines.add("");
-        }
-        return lines;
     }
 
     private FieldResolution resolveOrInjectTextField(
