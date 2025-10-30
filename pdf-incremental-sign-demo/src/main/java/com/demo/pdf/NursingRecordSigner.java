@@ -491,21 +491,15 @@ public final class NursingRecordSigner {
             boolean hasField = af.getFieldItem(signFieldName) != null;
             boolean hasAnySignatures = !af.getSignatureNames().isEmpty();
 
-            boolean doCertify = !hasAnySignatures || params.isCertifyP3();
+            boolean doCertify = params.isCertifyP3();
             if (hasAnySignatures && params.isCertifyP3()) {
                 log.warn("[sign-row] Document already has signatures. Ignoring certifyP3 for subsequent signatures.");
                 doCertify = false;
             }
 
             if (doCertify) {
-                int level;
-                if (params.isCertifyP3()) {
-                    level = PdfSignatureAppearance.CERTIFIED_FORM_FILLING_AND_ANNOTATIONS;
-                    log.info("[sign-row] Applying DocMDP as FIRST signature (P=3).");
-                } else {
-                    level = PdfSignatureAppearance.CERTIFIED_FORM_FILLING;
-                    log.info("[sign-row] Applying DocMDP as FIRST signature (P=2).");
-                }
+                int level = PdfSignatureAppearance.CERTIFIED_FORM_FILLING_AND_ANNOTATIONS;
+                log.info("[sign-row] Applying DocMDP by flag: level={}", level);
                 appearance.setCertificationLevel(level);
             } else {
                 log.info("[sign-row] Approval signature (no DocMDP).");
@@ -598,8 +592,17 @@ public final class NursingRecordSigner {
         FileOutputStream os = null;
         PdfStamper stamper = null;
         boolean signDetachedCalled = false;
+        boolean docmdpPresent = false;
         try {
             reader = new PdfReader(params.getSource());
+            PdfDictionary perms = reader.getCatalog().getAsDict(PdfName.PERMS);
+            docmdpPresent = perms != null && perms.getAsDict(PdfName.DOCMDP) != null;
+            if (docmdpPresent) {
+                log.error("[sign-row:fallback] Document is certified (DocMDP). Aborting fallback drawing.");
+                throw new IllegalStateException(
+                        "This document is certified (DocMDP). Fallback drawing modifies page content and is not allowed. "
+                                + "Either sign without certification until the last round, or use pre-created form fields.");
+            }
             AcroFields af = reader.getAcroFields();
             boolean hasAnySignatures = !af.getSignatureNames().isEmpty();
 
@@ -629,29 +632,22 @@ public final class NursingRecordSigner {
             appearance.setLayer2Font(signatureFont);
             appearance.setLayer2Text(buildLayer2Text(params));
 
-            boolean doCertify = !hasAnySignatures || params.isCertifyP3();
+            boolean doCertify = params.isCertifyP3();
             if (hasAnySignatures && params.isCertifyP3()) {
                 log.warn("[sign-row] Document already has signatures. Ignoring certifyP3 for subsequent signatures.");
                 doCertify = false;
             }
 
             if (doCertify) {
-                int level;
-                if (params.isCertifyP3()) {
-                    level = PdfSignatureAppearance.CERTIFIED_FORM_FILLING_AND_ANNOTATIONS;
-                    log.info("[sign-row] Applying DocMDP as FIRST signature (P=3).");
-                } else {
-                    level = PdfSignatureAppearance.CERTIFIED_FORM_FILLING;
-                    log.info("[sign-row] Applying DocMDP as FIRST signature (P=2).");
-                }
+                int level = PdfSignatureAppearance.CERTIFIED_FORM_FILLING_AND_ANNOTATIONS;
+                log.info("[sign-row] Applying DocMDP by flag: level={}", level);
                 appearance.setCertificationLevel(level);
             } else {
                 log.info("[sign-row] Approval signature (no DocMDP).");
             }
 
             float rowBaselineY = params.getTableTopY() - (params.getRow() - 1) * params.getRowHeight();
-            PdfDictionary perms = reader.getCatalog().getAsDict(PdfName.PERMS);
-            boolean certified = perms != null && perms.getAsDict(PdfName.DOCMDP) != null;
+            boolean certified = docmdpPresent;
             if (certified) {
                 // 禁用：新增注释在 DocMDP=P=2 下不被允许，会让前一修订签名失效
                 // applyFallbackAnnotations(stamper, pageIndex, rowBaselineY, /* ... */);
