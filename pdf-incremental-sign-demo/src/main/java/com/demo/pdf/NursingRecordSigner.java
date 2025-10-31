@@ -410,7 +410,9 @@ public final class NursingRecordSigner {
             logPreSigningState(reader, prevFile);
 
             Rectangle pageRect = requirePageRectangle(reader, pageIndex);
-            validateRectangle(signatureRect, pageRect, "signature");
+            if (params.isSignVisible()) {
+                validateRectangle(signatureRect, pageRect, "signature");
+            }
 
             os = new FileOutputStream(params.getDestination());
             stamper = PdfStamper.createSignature(reader, os, '\0', null, true);
@@ -447,8 +449,10 @@ public final class NursingRecordSigner {
             appearance.setLayer2Font(appearanceFont);
             appearance.setLayer2Text(buildLayer2Text(params));
 
-            ensureSignatureField(stamper, signatureRect, pageIndex, signFieldName, params.isSignVisible());
-            appearance.setVisibleSignature(signFieldName);
+            Rectangle widgetRect = params.isSignVisible()
+                    ? signatureRect
+                    : new Rectangle(0, 0, 0, 0);
+            appearance.setVisibleSignature(widgetRect, pageIndex, signFieldName);
             if (params.isSignVisible()) {
                 log.info("[sign-row] setVisibleSignature field='{}' page={} rect={} fallbackDraw={}",
                         signFieldName, pageIndex, describeRect(signatureRect), params.isFallbackDraw());
@@ -524,7 +528,7 @@ public final class NursingRecordSigner {
         ExternalSignature signature = new PrivateKeySignature(privateKey, DigestAlgorithms.SHA256,
                 BouncyCastleProvider.PROVIDER_NAME);
         MakeSignature.signDetached(appearance, digest, signature, chain, null, null, tsaClient, 0,
-                MakeSignature.CryptoStandard.CADES);
+                MakeSignature.CryptoStandard.CMS);
     }
 
     private KeyMaterial loadKeyMaterial(SignParams params) throws Exception {
@@ -589,39 +593,22 @@ public final class NursingRecordSigner {
     }
 
     private static void ensureAcroFormSigFlags(PdfStamper stamper) {
-        PdfDictionary catalog = stamper.getReader().getCatalog();
+        PdfReader reader = stamper.getReader();
+        PdfDictionary catalog = reader.getCatalog();
         PdfDictionary acro = catalog.getAsDict(PdfName.ACROFORM);
         if (acro == null) {
             acro = new PdfDictionary();
             catalog.put(PdfName.ACROFORM, acro);
         }
         acro.put(PdfName.SIGFLAGS, new PdfNumber(3));
-        stamper.markUsed(catalog);
-        stamper.markUsed(acro);
-    }
-
-    private PdfFormField ensureSignatureField(PdfStamper stamper, Rectangle rect,
-                                              int page, String fieldName, boolean visible) throws Exception {
-        AcroFields af = stamper.getAcroFields();
-        int type = af.getFieldType(fieldName);
-        if (type == AcroFields.FIELD_TYPE_SIGNATURE) {
-            return null;
+        PdfWriter writer = stamper.getWriter();
+        if (writer != null) {
+            writer.markUsed(catalog);
+            writer.markUsed(acro);
+        } else {
+            stamper.markUsed(catalog);
+            stamper.markUsed(acro);
         }
-        if (type != AcroFields.FIELD_TYPE_NONE) {
-            throw new IllegalStateException("Field '" + fieldName + "' exists but is not a signature field");
-        }
-        PdfFormField sig = PdfFormField.createSignature(stamper.getWriter());
-        sig.setFieldName(fieldName);
-        int flags = PdfAnnotation.FLAGS_PRINT;
-        if (!visible) {
-            flags |= PdfAnnotation.FLAGS_INVISIBLE | PdfAnnotation.FLAGS_HIDDEN;
-        }
-        sig.setFlags(flags);
-        sig.setPage(page);
-        sig.setWidget(rect, PdfAnnotation.HIGHLIGHT_OUTLINE);
-        stamper.addAnnotation(sig, page);
-        log.info("[form] created signature field='{}' page={} rect={}", fieldName, page, rect);
-        return sig;
     }
 
     private void ensureOrUpdateRowTextFields(PdfStamper stamper, int page, int row,
