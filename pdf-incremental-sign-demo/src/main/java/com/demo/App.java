@@ -104,6 +104,10 @@ public class App {
                 description = "Draw text directly onto the PDF when form fields are missing")
         private boolean fallbackDraw;
 
+        @CommandLine.Option(names = "--form-off", required = false,
+                description = "Disable form creation and use FreeText annotations instead")
+        private boolean formOff;
+
         @CommandLine.Option(names = "--page-index", required = false, defaultValue = "1",
                 description = "1-based page index used for fallback drawing")
         private int pageIndex;
@@ -182,6 +186,7 @@ public class App {
             params.setCertifyP3(certifyP3);
             params.setCjkFontPath(cjkFont != null ? cjkFont.toAbsolutePath().toString() : null);
             params.setFallbackDraw(fallbackDraw);
+            params.setFormOff(formOff);
             params.setPageIndex(pageIndex);
             params.setTableTopY(tableTopY);
             params.setRowHeight(rowHeight);
