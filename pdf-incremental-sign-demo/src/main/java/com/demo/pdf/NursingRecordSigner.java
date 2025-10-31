@@ -1,6 +1,5 @@
 package com.demo.pdf;
 
-import com.itextpdf.text.Element;
 import com.itextpdf.text.Font;
 import com.itextpdf.text.Rectangle;
 import com.itextpdf.text.pdf.AcroFields;
@@ -92,6 +91,7 @@ public final class NursingRecordSigner {
         private boolean certifyP3;
         private String cjkFontPath;
         private boolean fallbackDraw;
+        private boolean formOff;
         private int pageIndex = 1;
         private float tableTopY = 650f;
         private float rowHeight = 22f;
@@ -248,6 +248,14 @@ public final class NursingRecordSigner {
 
         public void setFallbackDraw(boolean fallbackDraw) {
             this.fallbackDraw = fallbackDraw;
+        }
+
+        public boolean isFormOff() {
+            return formOff;
+        }
+
+        public void setFormOff(boolean formOff) {
+            this.formOff = formOff;
         }
 
         public int getPageIndex() {
@@ -596,9 +604,16 @@ public final class NursingRecordSigner {
 
             int pageIndex = params.getPageIndex();
             Rectangle pageRect = requirePageRectangle(reader, pageIndex);
-            Rectangle timeRect = rectForTime(params.getRow());
-            Rectangle textRect = rectForText(params.getRow());
-            Rectangle nurseRect = rectForNurse(params.getRow());
+            float baseline = params.getTableTopY() - (params.getRow() - 1) * params.getRowHeight();
+            float y0 = baseline - (params.getRowHeight() - 4f);
+            float y1 = baseline - 2f;
+            float timeRight = Math.max(params.getTimeX() + 48f, params.getTextX() - 6f);
+            float textRight = Math.min(params.getTextX() + params.getTextMaxWidth(), params.getNurseX() - 10f);
+            float nurseRight = params.getNurseX() + 120f;
+
+            Rectangle timeRect = new Rectangle(params.getTimeX(), y0, timeRight, y1);
+            Rectangle textRect = new Rectangle(params.getTextX(), y0, textRight, y1);
+            Rectangle nurseRect = new Rectangle(params.getNurseX(), y0, nurseRight, y1);
             validateRectangle(timeRect, pageRect, "time");
             validateRectangle(textRect, pageRect, "text");
             validateRectangle(nurseRect, pageRect, "nurse");
@@ -821,117 +836,108 @@ public final class NursingRecordSigner {
             int page,
             BaseFont bf
     ) throws Exception {
-        AcroFields fields = acroFields;
-        FieldResolution timeField = resolveOrInjectTextField(
-                stamper,
-                fields,
-                row,
-                new String[]{"row%d.time", "recordTime_%d"},
-                timeRect,
-                page,
-                bf,
-                12f,
-                false
-        );
-        if (timeField.created) {
-            fields = stamper.getAcroFields();
-        }
-        FieldResolution textField = resolveOrInjectTextField(
-                stamper,
-                fields,
-                row,
-                new String[]{"row%d.text", "recordText_%d"},
-                textRect,
-                page,
-                bf,
-                12f,
-                true
-        );
-        if (textField.created) {
-            fields = stamper.getAcroFields();
-        }
-        FieldResolution nurseField = resolveOrInjectTextField(
-                stamper,
-                fields,
-                row,
-                new String[]{"row%d.nurse", "recordNurse_%d"},
-                nurseRect,
-                page,
-                bf,
-                12f,
-                false
-        );
-        if (nurseField.created) {
-            fields = stamper.getAcroFields();
-        }
+        String timeFieldName = resolvePreferredFieldName(acroFields, row,
+                new String[]{"row%d.time", "recordTime_%d"});
+        String recordFieldName = resolvePreferredFieldName(acroFields, row,
+                new String[]{"row%d.text", "recordText_%d"});
+        String nurseFieldName = resolvePreferredFieldName(acroFields, row,
+                new String[]{"row%d.nurse", "recordNurse_%d"});
 
-        applyReadOnlyFieldValue(fields, timeField.name, bf, 12f, safe(params.getTimeValue()), false);
-        applyReadOnlyFieldValue(fields, textField.name, bf, 12f, safe(params.getTextValue()), true);
-        applyReadOnlyFieldValue(fields, nurseField.name, bf, 12f, safe(params.getNurse()), false);
-        return fields;
+        acroFields = processRowField(stamper, acroFields, params, timeFieldName, timeRect,
+                safe(params.getTimeValue()), bf, 12f, page, false);
+        acroFields = processRowField(stamper, acroFields, params, recordFieldName, textRect,
+                safe(params.getTextValue()), bf, 12f, page, true);
+        acroFields = processRowField(stamper, acroFields, params, nurseFieldName, nurseRect,
+                safe(params.getNurse()), bf, 12f, page, false);
+        return acroFields;
     }
 
-    private void applyReadOnlyFieldValue(
+    private AcroFields processRowField(
+            PdfStamper stamper,
             AcroFields acroFields,
+            SignParams params,
             String fieldName,
+            Rectangle rect,
+            String value,
             BaseFont font,
             float fontSize,
-            String value,
+            int pageIndex,
             boolean multiline
     ) throws Exception {
-        acroFields.setFieldProperty(fieldName, "textfont", font, null);
-        acroFields.setFieldProperty(fieldName, "textsize", fontSize, null);
-        if (!acroFields.setField(fieldName, value)) {
-            throw new IllegalStateException("Unable to set field: " + fieldName
-                    + " fields=" + dumpFieldNames(acroFields));
+        AcroFields.Item item = acroFields.getFieldItem(fieldName);
+        if (params.isFormOff() && item == null) {
+            addReadOnlyFreeTextAnnotation(stamper, rect, value, pageIndex);
+            return acroFields;
         }
-        int flags = PdfFormField.FF_READ_ONLY;
-        if (multiline) {
-            flags |= PdfFormField.FF_MULTILINE;
+        if (item != null) {
+            acroFields.setFieldProperty(fieldName, "textfont", font, null);
+            acroFields.setFieldProperty(fieldName, "textsize", fontSize, null);
         }
-        acroFields.setFieldProperty(fieldName, "setfflags", flags, null);
-        acroFields.regenerateField(fieldName);
+        upsertReadOnlyTextField(stamper, acroFields, fieldName, rect, value, font, fontSize,
+                pageIndex, multiline);
+        if (item == null) {
+            return stamper.getAcroFields();
+        }
+        return acroFields;
     }
 
-    private FieldResolution resolveOrInjectTextField(
-            PdfStamper stamper,
-            AcroFields af,
-            int row,
-            String[] candidates,
-            Rectangle rect,
-            int page,
-            BaseFont bf,
-            float fontSize,
-            boolean multiline
-    ) throws Exception {
-        for (String c : candidates) {
-            String name = String.format(c, row);
-            if (af.getFieldItem(name) != null) {
-                return new FieldResolution(name, false);
+    private String resolvePreferredFieldName(AcroFields acroFields, int row, String[] candidates) {
+        for (String candidate : candidates) {
+            String name = String.format(candidate, row);
+            if (acroFields.getFieldItem(name) != null) {
+                return name;
             }
         }
-        String name = String.format(candidates[0], row);
-        TextField tf = new TextField(stamper.getWriter(), rect, name);
-        if (multiline) {
-            tf.setOptions(TextField.MULTILINE);
-        }
-        tf.setFont(bf);
-        tf.setFontSize(fontSize);
-        tf.setAlignment(Element.ALIGN_LEFT);
-        PdfFormField f = tf.getTextField();
-        f.setFlags(PdfAnnotation.FLAGS_PRINT);
-        stamper.addAnnotation(f, page);
-        return new FieldResolution(name, true);
+        return String.format(candidates[0], row);
     }
 
-    private static final class FieldResolution {
-        final String name;
-        final boolean created;
-
-        private FieldResolution(String name, boolean created) {
-            this.name = name;
-            this.created = created;
+    private void upsertReadOnlyTextField(
+            PdfStamper stamper,
+            AcroFields acro,
+            String fieldName,
+            Rectangle rect,
+            String value,
+            BaseFont font,
+            float fontSize,
+            int pageIndex,
+            boolean multiline
+    ) throws Exception {
+        AcroFields.Item item = acro.getFieldItem(fieldName);
+        if (item == null) {
+            TextField tf = new TextField(stamper.getWriter(), rect, fieldName);
+            tf.setFont(font);
+            tf.setFontSize(fontSize);
+            int options = TextField.READ_ONLY;
+            if (multiline) {
+                options |= TextField.MULTILINE;
+            }
+            tf.setOptions(options);
+            tf.setText(value);
+            PdfFormField fld = tf.getTextField();
+            fld.setFlags(PdfAnnotation.FLAGS_PRINT);
+            stamper.addAnnotation(fld, pageIndex);
+            log.info("[form] created field='{}' page={} rect={}", fieldName, pageIndex, rect);
+        } else {
+            boolean ok = acro.setField(fieldName, value);
+            int flags = PdfFormField.FF_READ_ONLY;
+            if (multiline) {
+                flags |= PdfFormField.FF_MULTILINE;
+            }
+            acro.setFieldProperty(fieldName, "setfflags", flags, null);
+            log.info("[form] updated field='{}' ok={} value='{}'", fieldName, ok, value);
         }
+    }
+
+    private void addReadOnlyFreeTextAnnotation(
+            PdfStamper stamper,
+            Rectangle rect,
+            String value,
+            int pageIndex
+    ) throws Exception {
+        PdfAnnotation ann = PdfAnnotation.createFreeText(stamper.getWriter(), rect, value, null);
+        ann.setFlags(PdfAnnotation.FLAGS_READONLY);
+        stamper.addAnnotation(ann, pageIndex);
+        log.info("[annot] created free-text page={} rect={} value='{}'", pageIndex, rect, value);
     }
 
     private static final class KeyMaterial {
