@@ -5,6 +5,9 @@ import com.itextpdf.text.pdf.PdfDictionary;
 import com.itextpdf.text.pdf.PdfName;
 import com.itextpdf.text.pdf.PdfString;
 
+import java.util.Arrays;
+import java.util.Objects;
+
 /**
  * Lightweight replacement for the PdfSigLockDictionary utility that ships with
  * iText 5. Some distributions of the library omit the original helper, which
@@ -58,22 +61,43 @@ public class PdfSigLockDictionary extends PdfDictionary {
      * @param permission how the provided field names should be interpreted
      * @param fields     the relevant field names, may be {@code null}
      */
+    private final LockPermissions permission;
+    private final String[] fields;
+
     public PdfSigLockDictionary(LockPermissions permission, String[] fields) {
         super();
+        this.permission = permission;
+        this.fields = normaliseFields(fields);
+
         put(TYPE, SIG_FIELD_LOCK);
         if (permission != null) {
             put(ACTION, permission.getPdfName());
         }
-        if (fields != null && fields.length > 0) {
+        if (this.fields.length > 0) {
             PdfArray array = new PdfArray();
-            for (String field : fields) {
-                if (field != null && !field.isBlank()) {
-                    array.add(new PdfString(field));
-                }
+            for (String field : this.fields) {
+                array.add(new PdfString(field));
             }
-            if (array.size() > 0) {
-                put(FIELDS, array);
-            }
+            put(FIELDS, array);
         }
+    }
+
+    private static String[] normaliseFields(String[] fields) {
+        if (fields == null || fields.length == 0) {
+            return new String[0];
+        }
+        return Arrays.stream(fields)
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .toArray(String[]::new);
+    }
+
+    public LockPermissions getPermission() {
+        return permission;
+    }
+
+    public String[] getFields() {
+        return fields.clone();
     }
 }
