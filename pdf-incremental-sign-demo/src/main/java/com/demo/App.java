@@ -93,20 +93,12 @@ public class App {
         @CommandLine.Option(names = "--tsaUrl", required = false, description = "Optional TSA URL")
         private String tsaUrl;
 
-        @CommandLine.Option(names = "--certify-p3", required = false,
-                description = "Apply DocMDP certification level 3 (use for the first signing round)")
-        private boolean certifyP3;
-
         @CommandLine.Option(names = "--cjk-font", required = false, description = "Optional path to a CJK font")
         private Path cjkFont;
 
         @CommandLine.Option(names = "--fallback-draw", required = false,
                 description = "Draw text directly onto the PDF when form fields are missing")
         private boolean fallbackDraw;
-
-        @CommandLine.Option(names = "--form-off", required = false,
-                description = "Disable form creation and use FreeText annotations instead")
-        private boolean formOff;
 
         @CommandLine.Option(names = "--page-index", required = false, defaultValue = "1",
                 description = "1-based page index used for fallback drawing")
@@ -183,10 +175,8 @@ public class App {
             params.setLocation(location);
             params.setContact(contact);
             params.setTsaUrl(tsaUrl);
-            params.setCertifyP3(certifyP3);
             params.setCjkFontPath(cjkFont != null ? cjkFont.toAbsolutePath().toString() : null);
             params.setFallbackDraw(fallbackDraw);
-            params.setFormOff(formOff);
             params.setPageIndex(pageIndex);
             params.setTableTopY(tableTopY);
             params.setRowHeight(rowHeight);
