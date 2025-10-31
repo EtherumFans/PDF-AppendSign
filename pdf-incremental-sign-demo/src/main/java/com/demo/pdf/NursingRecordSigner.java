@@ -447,14 +447,13 @@ public final class NursingRecordSigner {
             appearance.setLayer2Font(appearanceFont);
             appearance.setLayer2Text(buildLayer2Text(params));
 
-            ensureSignatureField(stamper, signatureRect, pageIndex, signFieldName);
+            ensureSignatureField(stamper, signatureRect, pageIndex, signFieldName, params.isSignVisible());
+            appearance.setVisibleSignature(signFieldName);
             if (params.isSignVisible()) {
-                appearance.setVisibleSignature(new Rectangle(signatureRect), pageIndex, signFieldName);
-                log.info("[sign-row] visible-sign field='{}' page={} rect={} fallbackDraw={}",
+                log.info("[sign-row] setVisibleSignature field='{}' page={} rect={} fallbackDraw={}",
                         signFieldName, pageIndex, describeRect(signatureRect), params.isFallbackDraw());
             } else {
-                appearance.setVisibleSignature(signFieldName);
-                log.info("[sign-row] invisible-sign field='{}' page={} fallbackDraw={}",
+                log.info("[sign-row] setVisibleSignature (invisible) field='{}' page={} fallbackDraw={}",
                         signFieldName, pageIndex, params.isFallbackDraw());
             }
 
@@ -504,6 +503,7 @@ public final class NursingRecordSigner {
         }
 
         if (signCompleted) {
+            dumpSignatures("AFTER", params.getDestination());
             try {
                 long prefixLen = computePrevRevisionLength(prevFile, destFile);
                 log.info("[sign-row] prev='{}' ({}B) curr='{}' ({}B) prefixLen={}B", prevFile.getAbsolutePath(),
@@ -514,7 +514,6 @@ public final class NursingRecordSigner {
                 throw new IllegalStateException("Failed to validate incremental prefix", ioException);
             }
             validateSignedDocument(params.getDestination(), signFieldName, pageIndex);
-            dumpSignatures("AFTER", params.getDestination());
         }
     }
 
@@ -602,7 +601,7 @@ public final class NursingRecordSigner {
     }
 
     private PdfFormField ensureSignatureField(PdfStamper stamper, Rectangle rect,
-                                              int page, String fieldName) throws Exception {
+                                              int page, String fieldName, boolean visible) throws Exception {
         AcroFields af = stamper.getAcroFields();
         int type = af.getFieldType(fieldName);
         if (type == AcroFields.FIELD_TYPE_SIGNATURE) {
@@ -613,7 +612,11 @@ public final class NursingRecordSigner {
         }
         PdfFormField sig = PdfFormField.createSignature(stamper.getWriter());
         sig.setFieldName(fieldName);
-        sig.setFlags(PdfAnnotation.FLAGS_PRINT);
+        int flags = PdfAnnotation.FLAGS_PRINT;
+        if (!visible) {
+            flags |= PdfAnnotation.FLAGS_INVISIBLE | PdfAnnotation.FLAGS_HIDDEN;
+        }
+        sig.setFlags(flags);
         sig.setPage(page);
         sig.setWidget(rect, PdfAnnotation.HIGHLIGHT_OUTLINE);
         stamper.addAnnotation(sig, page);
