@@ -39,6 +39,7 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -695,12 +696,49 @@ public final class NursingRecordSigner {
     }
 
     private void attachRowFieldLock(PdfSignatureAppearance appearance, int row) {
+        if (appearance == null) {
+            return;
+        }
+
         String prefix = "row" + row + ".";
         PdfSigLockDictionary lock = new PdfSigLockDictionary(
                 PdfSigLockDictionary.LockPermissions.INCLUDE,
                 new String[]{prefix + "time", prefix + "text", prefix + "nurse"}
         );
-        appearance.setFieldLockDictionary(lock);
+
+        if (!applyFieldLockDictionary(appearance, lock)) {
+            log.warn("[sign-row] PdfSignatureAppearance#setFieldLockDictionary unavailable; row {} fields remain editable",
+                    row);
+        }
+    }
+
+    private boolean applyFieldLockDictionary(PdfSignatureAppearance appearance, PdfSigLockDictionary lock) {
+        try {
+            Method method = PdfSignatureAppearance.class.getMethod("setFieldLockDictionary", PdfSigLockDictionary.class);
+            method.invoke(appearance, lock);
+            return true;
+        } catch (NoSuchMethodException missing) {
+            return tryLegacyFieldLock(appearance, lock, missing);
+        } catch (ReflectiveOperationException ex) {
+            log.debug("[sign-row] Unable to apply field lock dictionary via reflection: {}", ex.toString());
+            return false;
+        }
+    }
+
+    private boolean tryLegacyFieldLock(PdfSignatureAppearance appearance, PdfSigLockDictionary lock, Exception missing) {
+        try {
+            Method legacy = PdfSignatureAppearance.class.getMethod(
+                    "setFieldLock",
+                    PdfSigLockDictionary.LockPermissions.class,
+                    String[].class
+            );
+            legacy.invoke(appearance, lock.getPermission(), lock.getFields());
+            return true;
+        } catch (ReflectiveOperationException legacyEx) {
+            log.debug("[sign-row] Field lock methods unavailable ({} / {})",
+                    missing.toString(), legacyEx.toString());
+            return false;
+        }
     }
 
     private void drawRowTextsOnPage(PdfStamper stamper, int page, int row,
