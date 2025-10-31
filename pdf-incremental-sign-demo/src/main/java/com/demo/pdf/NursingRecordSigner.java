@@ -611,13 +611,12 @@ public final class NursingRecordSigner {
         if (type != AcroFields.FIELD_TYPE_NONE) {
             throw new IllegalStateException("Field '" + fieldName + "' exists but is not a signature field");
         }
-        PdfWriter writer = stamper.getWriter();
-        PdfFormField sig = PdfFormField.createSignature(writer);
+        PdfFormField sig = PdfFormField.createSignature(stamper.getWriter());
         sig.setFieldName(fieldName);
         sig.setFlags(PdfAnnotation.FLAGS_PRINT);
         sig.setPage(page);
         sig.setWidget(rect, PdfAnnotation.HIGHLIGHT_OUTLINE);
-        writer.addAnnotation(sig);
+        stamper.addAnnotation(sig, page);
         log.info("[form] created signature field='{}' page={} rect={}", fieldName, page, rect);
         return sig;
     }
