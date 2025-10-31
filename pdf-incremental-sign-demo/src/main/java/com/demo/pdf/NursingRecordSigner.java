@@ -601,14 +601,8 @@ public final class NursingRecordSigner {
             catalog.put(PdfName.ACROFORM, acro);
         }
         acro.put(PdfName.SIGFLAGS, new PdfNumber(3));
-        PdfWriter writer = stamper.getWriter();
-        if (writer != null) {
-            writer.markUsed(catalog);
-            writer.markUsed(acro);
-        } else {
-            stamper.markUsed(catalog);
-            stamper.markUsed(acro);
-        }
+        stamper.markUsed(catalog);
+        stamper.markUsed(acro);
     }
 
     private void ensureOrUpdateRowTextFields(PdfStamper stamper, int page, int row,
