@@ -434,7 +434,7 @@ public final class NursingRecordSigner {
             validateRectangle(nurseRect, pageRect, "nurse");
             tempFile = File.createTempFile("nursing-record-sign", ".tmp");
             tempFile.deleteOnExit();
-            stamper = PdfStamper.createSignature(reader, os, '\0', tempFile.getAbsolutePath(), true);
+            stamper = PdfStamper.createSignature(reader, os, '\0', tempFile, true);
             log.info("[sign-row] createSignature append=true");
 
             AcroFields acroFields = stamper.getAcroFields();
@@ -606,7 +606,7 @@ public final class NursingRecordSigner {
             os = new FileOutputStream(params.getDestination());
             tempFile = File.createTempFile("nursing-record-sign", ".tmp");
             tempFile.deleteOnExit();
-            stamper = PdfStamper.createSignature(reader, os, '\0', tempFile.getAbsolutePath(), true);
+            stamper = PdfStamper.createSignature(reader, os, '\0', tempFile, true);
             log.info("[sign-row:fallback] createSignature append=true");
 
             PdfSignatureAppearance appearance = stamper.getSignatureAppearance();
