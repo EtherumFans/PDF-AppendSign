@@ -7,7 +7,6 @@ import com.itextpdf.text.pdf.AcroFields;
 import com.itextpdf.text.pdf.BaseFont;
 import com.itextpdf.text.pdf.PdfAnnotation;
 import com.itextpdf.text.pdf.PdfArray;
-import com.itextpdf.text.pdf.PdfContentByte;
 import com.itextpdf.text.pdf.PdfDictionary;
 import com.itextpdf.text.pdf.PdfFormField;
 import com.itextpdf.text.pdf.PdfIndirectReference;
@@ -369,10 +368,14 @@ public final class NursingRecordSigner {
         log.info("[sign-row] src={}, dest={}, row={}, time='{}', nurse='{}'",
                 params.getSource(), params.getDestination(), params.getRow(), params.getTimeValue(),
                 params.getNurse());
-        log.info("[sign-row] fallbackDraw={}, page={}, tableTopY={}, rowHeight={}, timeX={}, textX={}, nurseX={}, textMaxW={}, fontSize={}",
-                params.isFallbackDraw(), params.getPageIndex(), params.getTableTopY(), params.getRowHeight(),
+        log.info("[sign-row] page={}, tableTopY={}, rowHeight={}, timeX={}, textX={}, nurseX={}, textMaxW={}, fontSize={}",
+                params.getPageIndex(), params.getTableTopY(), params.getRowHeight(),
                 params.getTimeX(), params.getTextX(), params.getNurseX(), params.getTextMaxWidth(),
                 params.getFontSize());
+
+        if (params.isFallbackDraw()) {
+            throw new IllegalArgumentException("Fallback drawing mode is disabled in layered signing workflow");
+        }
 
         int row = params.getRow();
         int pageIndex = params.getPageIndex();
@@ -398,14 +401,27 @@ public final class NursingRecordSigner {
 
         try {
             reader = new PdfReader(params.getSource());
+            AcroFields preExistingFields = reader.getAcroFields();
+            int existingSigCount = preExistingFields.getSignatureNames().size();
             PdfDictionary perms = reader.getCatalog().getAsDict(PdfName.PERMS);
             PdfDictionary docMdpDict = perms != null ? perms.getAsDict(PdfName.DOCMDP) : null;
             Integer docMdpPerm = getDocMdpPermission(reader);
-            if (docMdpDict != null || docMdpPerm != null) {
-                String permText = docMdpPerm == null ? "unknown" : docMdpPerm.toString();
-                throw new IllegalStateException(String.format(
-                        "Document is certified with DocMDP permission P=%s. Route A requires approval signatures only.",
-                        permText));
+            if (existingSigCount == 0) {
+                if (docMdpPerm != null && docMdpPerm != PdfSignatureAppearance.CERTIFIED_FORM_FILLING_AND_ANNOTATIONS) {
+                    throw new IllegalStateException(String.format(
+                            "Document already certified with incompatible DocMDP permission P=%s.", docMdpPerm));
+                }
+                if (docMdpDict != null && docMdpPerm == null) {
+                    throw new IllegalStateException("Document contains DocMDP dictionary without permission entry.");
+                }
+            } else {
+                if (docMdpPerm == null) {
+                    throw new IllegalStateException("Certified signing route requires DocMDP permission P=2 on subsequent approvals.");
+                }
+                if (docMdpPerm != PdfSignatureAppearance.CERTIFIED_FORM_FILLING_AND_ANNOTATIONS) {
+                    throw new IllegalStateException(String.format(
+                            "Certified document must keep DocMDP permission P=2. Found P=%s.", docMdpPerm));
+                }
             }
             logPreSigningState(reader, prevFile);
 
@@ -418,6 +434,13 @@ public final class NursingRecordSigner {
             stamper = PdfStamper.createSignature(reader, os, '\0', null, true);
             log.info("[sign-row] createSignature append=true");
 
+            PdfSignatureAppearance appearance = stamper.getSignatureAppearance();
+            stamper.getWriter().setSigFlags(PdfWriter.SIGNATURE_EXIST | PdfWriter.APPENDONLY);
+            if (existingSigCount == 0) {
+                appearance.setCertificationLevel(PdfSignatureAppearance.CERTIFIED_FORM_FILLING_AND_ANNOTATIONS);
+                log.info("[sign-row] Applied DocMDP certification level P=2 for first signature");
+            }
+
             ensureAcroFormIText5(reader, stamper, formFont);
             ensureAcroFormSigFlags(stamper);
 
@@ -428,17 +451,10 @@ public final class NursingRecordSigner {
             String textValue = safe(params.getTextValue());
             String nurseValue = safe(params.getNurse());
 
-            if (params.isFallbackDraw()) {
-                drawRowTextsOnPage(stamper, pageIndex, row, yBase,
-                        params.getTimeX(), params.getTextX(), params.getNurseX(), params.getFontSize(),
-                        timeValue, textValue, nurseValue, appearanceBaseFont);
-            } else {
-                ensureOrUpdateRowTextFields(stamper, pageIndex, row, yBase,
-                        params.getTimeX(), params.getTextX(), params.getNurseX(), params.getFontSize(),
-                        timeValue, textValue, nurseValue, formFont);
-            }
+            ensureOrUpdateRowTextFields(stamper, pageIndex, row, yBase,
+                    params.getTimeX(), params.getTextX(), params.getNurseX(), params.getFontSize(),
+                    timeValue, textValue, nurseValue, formFont);
 
-            PdfSignatureAppearance appearance = stamper.getSignatureAppearance();
             appearance.setReason(firstNonBlank(params.getReason(), "Nursing record approval"));
             appearance.setLocation(firstNonBlank(params.getLocation(), "Ward"));
             if (params.getContact() != null && !params.getContact().isBlank()) {
@@ -454,16 +470,14 @@ public final class NursingRecordSigner {
                     : new Rectangle(0, 0, 0, 0);
             appearance.setVisibleSignature(widgetRect, pageIndex, signFieldName);
             if (params.isSignVisible()) {
-                log.info("[sign-row] setVisibleSignature field='{}' page={} rect={} fallbackDraw={}",
-                        signFieldName, pageIndex, describeRect(signatureRect), params.isFallbackDraw());
+                log.info("[sign-row] setVisibleSignature field='{}' page={} rect={}",
+                        signFieldName, pageIndex, describeRect(signatureRect));
             } else {
-                log.info("[sign-row] setVisibleSignature (invisible) field='{}' page={} fallbackDraw={}",
-                        signFieldName, pageIndex, params.isFallbackDraw());
+                log.info("[sign-row] setVisibleSignature (invisible) field='{}' page={}",
+                        signFieldName, pageIndex);
             }
 
-            if (!params.isFallbackDraw()) {
-                attachRowFieldLock(appearance, row);
-            }
+            attachRowFieldLock(appearance, row);
 
             KeyMaterial keyMaterial = loadKeyMaterial(params);
             TSAClient tsaClient = buildTsaClient(params);
@@ -610,7 +624,6 @@ public final class NursingRecordSigner {
                                              float nurseX, float fontSize,
                                              String time, String text, String nurse,
                                              BaseFont bf) throws Exception {
-        PdfWriter writer = stamper.getWriter();
         AcroFields af = stamper.getAcroFields();
 
         String fTime = "row" + row + ".time";
@@ -626,55 +639,112 @@ public final class NursingRecordSigner {
         validateRectangle(rText, pageRect, fText);
         validateRectangle(rNurse, pageRect, fNurse);
 
-        if (af.getFieldType(fTime) == AcroFields.FIELD_TYPE_NONE) {
-            TextField t = new TextField(writer, rTime, fTime);
-            t.setFont(bf);
-            t.setFontSize(fontSize);
-            t.setOptions(TextField.READ_ONLY);
-            t.setText(time);
-            PdfFormField ff = t.getTextField();
-            ff.setFlags(PdfAnnotation.FLAGS_PRINT);
-            stamper.addAnnotation(ff, page);
-            log.info("[form] created field='{}' page={} rect={}", fTime, page, rTime);
-        } else {
-            af.setFieldProperty(fTime, "textfont", bf, null);
-            af.setFieldProperty(fTime, "textsize", fontSize, null);
-            af.setField(fTime, time);
-            af.setFieldProperty(fTime, "setfflags", PdfFormField.FF_READ_ONLY, null);
+        ensureTextField(stamper, af, fTime, rTime, bf, fontSize, time);
+        af.setFieldProperty(fTime, "textfont", bf, null);
+        af.setFieldProperty(fTime, "textsize", fontSize, null);
+        af.setFieldProperty(fTime, "setfflags", TextField.READ_ONLY, null);
+        af.regenerateField(fTime);
+        ensureWidgetPlacement(stamper, page, fTime);
+
+        ensureTextField(stamper, af, fText, rText, bf, fontSize, text);
+        af.setFieldProperty(fText, "textfont", bf, null);
+        af.setFieldProperty(fText, "textsize", fontSize, null);
+        af.setFieldProperty(fText, "setfflags", TextField.READ_ONLY | TextField.MULTILINE, null);
+        af.regenerateField(fText);
+        ensureWidgetPlacement(stamper, page, fText);
+
+        ensureTextField(stamper, af, fNurse, rNurse, bf, fontSize, nurse);
+        af.setFieldProperty(fNurse, "textfont", bf, null);
+        af.setFieldProperty(fNurse, "textsize", fontSize, null);
+        af.setFieldProperty(fNurse, "setfflags", TextField.READ_ONLY, null);
+        af.regenerateField(fNurse);
+        ensureWidgetPlacement(stamper, page, fNurse);
+    }
+
+    private static void ensureTextField(
+            PdfStamper stamper,
+            AcroFields af,
+            String fieldName,
+            Rectangle rect,
+            BaseFont bf,
+            float fontSize,
+            String value
+    ) throws Exception {
+        AcroFields.Item item = af.getFieldItem(fieldName);
+
+        if (item == null) {
+            TextField tf = new TextField(stamper.getWriter(), rect, fieldName);
+            tf.setBorderWidth(0);
+            tf.setBorderColor(null);
+            tf.setOptions(TextField.READ_ONLY);
+            tf.setFont(bf);
+            tf.setFontSize(fontSize);
+            tf.setAlignment(Element.ALIGN_LEFT);
+
+            PdfFormField field = tf.getTextField();
+            field.setFlags(PdfAnnotation.PRINT);
+            stamper.getWriter().addAnnotation(field);
+            log.info("[form] created field='{}' rect={}", fieldName, describeRect(rect));
         }
 
-        if (af.getFieldType(fText) == AcroFields.FIELD_TYPE_NONE) {
-            TextField t = new TextField(writer, rText, fText);
-            t.setFont(bf);
-            t.setFontSize(fontSize);
-            t.setOptions(TextField.READ_ONLY | TextField.MULTILINE);
-            t.setText(text);
-            PdfFormField ff = t.getTextField();
-            ff.setFlags(PdfAnnotation.FLAGS_PRINT);
-            stamper.addAnnotation(ff, page);
-            log.info("[form] created field='{}' page={} rect={}", fText, page, rText);
-        } else {
-            af.setFieldProperty(fText, "textfont", bf, null);
-            af.setFieldProperty(fText, "textsize", fontSize, null);
-            af.setField(fText, text);
-            af.setFieldProperty(fText, "setfflags", PdfFormField.FF_READ_ONLY | PdfFormField.FF_MULTILINE, null);
+        if (value != null) {
+            af.setField(fieldName, value, true);
+            af.setFieldProperty(fieldName, "setfflags", TextField.READ_ONLY, null);
+            af.regenerateField(fieldName);
         }
+    }
 
-        if (af.getFieldType(fNurse) == AcroFields.FIELD_TYPE_NONE) {
-            TextField t = new TextField(writer, rNurse, fNurse);
-            t.setFont(bf);
-            t.setFontSize(fontSize);
-            t.setOptions(TextField.READ_ONLY);
-            t.setText(nurse);
-            PdfFormField ff = t.getTextField();
-            ff.setFlags(PdfAnnotation.FLAGS_PRINT);
-            stamper.addAnnotation(ff, page);
-            log.info("[form] created field='{}' page={} rect={}", fNurse, page, rNurse);
-        } else {
-            af.setFieldProperty(fNurse, "textfont", bf, null);
-            af.setFieldProperty(fNurse, "textsize", fontSize, null);
-            af.setField(fNurse, nurse);
-            af.setFieldProperty(fNurse, "setfflags", PdfFormField.FF_READ_ONLY, null);
+    private void ensureWidgetPlacement(PdfStamper stamper, int page, String fieldName) {
+        try {
+            AcroFields af = stamper.getAcroFields();
+            AcroFields.Item item = af.getFieldItem(fieldName);
+            if (item == null || item.size() == 0) {
+                return;
+            }
+
+            PdfDictionary widget = item.getWidget(0);
+            if (widget == null) {
+                return;
+            }
+
+            PdfReader reader = stamper.getReader();
+            PdfDictionary pageDict = reader.getPageN(page);
+            if (pageDict == null) {
+                return;
+            }
+
+            PdfArray annots = pageDict.getAsArray(PdfName.ANNOTS);
+            if (annots == null) {
+                annots = new PdfArray();
+                pageDict.put(PdfName.ANNOTS, annots);
+                stamper.markUsed(pageDict);
+            }
+
+            PdfIndirectReference widgetRef = item.getWidgetRef(0);
+            if (widgetRef != null) {
+                boolean exists = false;
+                for (int i = 0; i < annots.size(); i++) {
+                    PdfIndirectReference ref = annots.getAsIndirectObject(i);
+                    if (widgetRef.equals(ref)) {
+                        exists = true;
+                        break;
+                    }
+                }
+                if (!exists) {
+                    annots.add(widgetRef);
+                    stamper.markUsed(pageDict);
+                }
+            }
+
+            if (widget.get(PdfName.P) == null) {
+                PdfIndirectReference pageRef = reader.getPageOrigRef(page);
+                if (pageRef != null) {
+                    widget.put(PdfName.P, pageRef);
+                    stamper.markUsed(widget);
+                }
+            }
+        } catch (Exception e) {
+            log.debug("[sign-row] Failed to ensure widget placement for field '{}': {}", fieldName, e.toString());
         }
     }
 
@@ -697,47 +767,40 @@ public final class NursingRecordSigner {
 
     private boolean applyFieldLockDictionary(PdfSignatureAppearance appearance, PdfSigLockDictionary lock) {
         try {
-            Method method = PdfSignatureAppearance.class.getMethod("setFieldLockDictionary", PdfSigLockDictionary.class);
-            method.invoke(appearance, lock);
+            Method preferred = PdfSignatureAppearance.class.getMethod("setFieldLockDict", PdfSigLockDictionary.class);
+            preferred.invoke(appearance, lock);
             return true;
-        } catch (NoSuchMethodException missing) {
-            return tryLegacyFieldLock(appearance, lock, missing);
+        } catch (NoSuchMethodException missingPreferred) {
+            return tryLegacyFieldLock(appearance, lock, missingPreferred);
         } catch (ReflectiveOperationException ex) {
             log.debug("[sign-row] Unable to apply field lock dictionary via reflection: {}", ex.toString());
             return false;
         }
     }
 
-    private boolean tryLegacyFieldLock(PdfSignatureAppearance appearance, PdfSigLockDictionary lock, Exception missing) {
+    private boolean tryLegacyFieldLock(PdfSignatureAppearance appearance, PdfSigLockDictionary lock, Exception missingPreferred) {
         try {
-            Method legacy = PdfSignatureAppearance.class.getMethod(
-                    "setFieldLock",
-                    PdfSigLockDictionary.LockPermissions.class,
-                    String[].class
-            );
-            legacy.invoke(appearance, lock.getPermission(), lock.getFields());
+            Method dictionary = PdfSignatureAppearance.class.getMethod("setFieldLockDictionary", PdfSigLockDictionary.class);
+            dictionary.invoke(appearance, lock);
             return true;
-        } catch (ReflectiveOperationException legacyEx) {
-            log.debug("[sign-row] Field lock methods unavailable ({} / {})",
-                    missing.toString(), legacyEx.toString());
+        } catch (NoSuchMethodException missingDictionary) {
+            try {
+                Method legacy = PdfSignatureAppearance.class.getMethod(
+                        "setFieldLock",
+                        PdfSigLockDictionary.LockPermissions.class,
+                        String[].class
+                );
+                legacy.invoke(appearance, lock.getPermission(), lock.getFields());
+                return true;
+            } catch (ReflectiveOperationException legacyEx) {
+                log.debug("[sign-row] Field lock methods unavailable ({} / {} / {})",
+                        missingPreferred.toString(), missingDictionary.toString(), legacyEx.toString());
+                return false;
+            }
+        } catch (ReflectiveOperationException dictionaryEx) {
+            log.debug("[sign-row] Unable to apply PdfSigLockDictionary: {}", dictionaryEx.toString());
             return false;
         }
-    }
-
-    private void drawRowTextsOnPage(PdfStamper stamper, int page, int row,
-                                    float baseY, float timeX, float textX,
-                                    float nurseX, float fontSize,
-                                    String time, String text, String nurse,
-                                    BaseFont bf) {
-        PdfContentByte cb = stamper.getOverContent(page);
-        cb.saveState();
-        cb.beginText();
-        cb.setFontAndSize(bf, fontSize);
-        cb.showTextAligned(Element.ALIGN_LEFT, time, timeX, baseY, 0);
-        cb.showTextAligned(Element.ALIGN_LEFT, text, textX, baseY, 0);
-        cb.showTextAligned(Element.ALIGN_LEFT, nurse, nurseX, baseY, 0);
-        cb.endText();
-        cb.restoreState();
     }
 
     private void validateSignedDocument(String path, String sigFieldName, int pageIndex) throws Exception {
